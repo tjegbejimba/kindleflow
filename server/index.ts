@@ -8,6 +8,7 @@ import { AuthStore, type UserProfile } from "./authStore.js";
 import { fetchAndExtractArticle } from "./articleFetcher.js";
 import { isEmailDeliveryEnabled, loadConfig } from "./config.js";
 import { fetchFeed } from "./feed.js";
+import { FileInviteCodes } from "./inviteCodes.js";
 import { generateKindleFile } from "./kindleFile.js";
 import { sendFileToKindle, sendMagicLink } from "./mailer.js";
 import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionPoller.js";
@@ -15,6 +16,7 @@ import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionP
 const config = loadConfig();
 const app = Fastify({ logger: true });
 const store = new AuthStore(config.dbPath);
+const inviteCodes = new FileInviteCodes(config.inviteCodesFile);
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const clientDist = path.join(projectRoot, "client", "dist");
 const SESSION_COOKIE = "kf_session";
@@ -47,8 +49,10 @@ try {
 
 app.get("/api/config", async () => ({
   emailDeliveryEnabled: isEmailDeliveryEnabled(config),
-  inviteRequired: Boolean(config.inviteCode),
-  authRequired: true
+  inviteRequired: await inviteCodes.hasInviteRequirement(config.inviteCode),
+  authRequired: true,
+  kindleApprovedSender: config.smtp?.from,
+  kindleSettingsUrl: "https://www.amazon.com/hz/mycd/myx#/home/settings/payment"
 }));
 
 app.post("/api/auth/request-link", async (request) => {
@@ -63,11 +67,15 @@ app.post("/api/auth/request-link", async (request) => {
     throw error;
   }
 
-  const token = store.createLoginToken(
-    body.email,
-    typeof body.inviteCode === "string" ? body.inviteCode : undefined,
-    config.inviteCode
-  );
+  if (!store.userExists(body.email)) {
+    await inviteCodes.consume(
+      typeof body.inviteCode === "string" ? body.inviteCode : undefined,
+      body.email,
+      config.inviteCode
+    );
+  }
+
+  const token = store.createLoginToken(body.email, "__already_invited__", undefined);
   const magicLink = `${config.appBaseUrl}/api/auth/verify?token=${encodeURIComponent(token)}`;
 
   await sendMagicLink(config.smtp, body.email, magicLink);
@@ -97,13 +105,19 @@ app.get("/api/me", async (request) => ({
 
 app.patch("/api/me", async (request) => {
   const user = requireUser(request);
-  const body = request.body as { kindleEmail?: unknown; autoSendToKindle?: unknown };
+  const body = request.body as {
+    kindleEmail?: unknown;
+    autoSendToKindle?: unknown;
+    subscriptionRetentionDays?: unknown;
+  };
 
   return {
     user: store.updateUserProfile(user.id, {
       kindleEmail:
         typeof body.kindleEmail === "string" && body.kindleEmail.trim() ? body.kindleEmail : body.kindleEmail === "" ? null : undefined,
-      autoSendToKindle: typeof body.autoSendToKindle === "boolean" ? body.autoSendToKindle : undefined
+      autoSendToKindle: typeof body.autoSendToKindle === "boolean" ? body.autoSendToKindle : undefined,
+      subscriptionRetentionDays:
+        typeof body.subscriptionRetentionDays === "number" ? body.subscriptionRetentionDays : undefined
     })
   };
 });

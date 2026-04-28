@@ -5,6 +5,7 @@ export interface AppConfig {
   port: number;
   dataDir: string;
   dbPath: string;
+  inviteCodesFile: string;
   appBaseUrl: string;
   inviteCode?: string;
   cookieSecure: boolean;
@@ -27,6 +28,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: Number(env.PORT ?? 3000),
     dataDir: path.resolve(env.DATA_DIR ?? "data"),
     dbPath: path.resolve(env.DB_PATH ?? path.join(env.DATA_DIR ?? "data", "kindleflow.sqlite")),
+    inviteCodesFile: path.resolve(env.INVITE_CODES_FILE ?? path.join(env.DATA_DIR ?? "data", "invite-codes.txt")),
     appBaseUrl: (env.APP_BASE_URL ?? `http://localhost:${env.PORT ?? 3000}`).replace(/\/$/, ""),
     inviteCode: env.INVITE_CODE,
     cookieSecure: env.COOKIE_SECURE === "true",

@@ -31,7 +31,8 @@ describe("AuthStore", () => {
     expect(user).toMatchObject({
       email: "tj@example.com",
       verified: true,
-      autoSendToKindle: true
+      autoSendToKindle: true,
+      subscriptionRetentionDays: 30
     });
   });
 
@@ -41,9 +42,14 @@ describe("AuthStore", () => {
     const user = store.getUserBySession(session);
     expect(user).not.toBeNull();
 
-    store.updateUserProfile(user!.id, { kindleEmail: "reader_123@kindle.com", autoSendToKindle: true });
+    store.updateUserProfile(user!.id, {
+      kindleEmail: "reader_123@kindle.com",
+      autoSendToKindle: true,
+      subscriptionRetentionDays: 14
+    });
     const updated = store.getUserBySession(session);
     expect(updated?.kindleEmail).toBe("reader_123@kindle.com");
+    expect(updated?.subscriptionRetentionDays).toBe(14);
 
     const first = store.addSubscription(user!.id, {
       feedUrl: "https://example.substack.com/feed",
@@ -58,5 +64,36 @@ describe("AuthStore", () => {
 
     expect(second.id).toBe(first.id);
     expect(store.listSubscriptions(user!.id)).toHaveLength(1);
+  });
+
+  it("prunes delivered posts older than a user's retention setting", async () => {
+    const token = store.createLoginToken("reader@example.com", "secret", "secret");
+    const session = store.consumeMagicToken(token);
+    const user = store.getUserBySession(session)!;
+    store.updateUserProfile(user.id, { subscriptionRetentionDays: 7 });
+    const subscription = store.addSubscription(user.id, {
+      feedUrl: "https://example.substack.com/feed",
+      sourceUrl: "https://example.substack.com",
+      title: "Example Substack"
+    });
+
+    store.markPostDelivered(subscription.id, {
+      url: "https://example.substack.com/p/old",
+      guid: "old",
+      title: "Old post",
+      filename: "old.epub"
+    });
+    store.markPostDelivered(subscription.id, {
+      url: "https://example.substack.com/p/new",
+      guid: "new",
+      title: "New post",
+      filename: "new.epub"
+    });
+    store.setDeliveredPostAgeForTest("https://example.substack.com/p/old", 10);
+    store.setDeliveredPostAgeForTest("https://example.substack.com/p/new", 2);
+
+    expect(store.pruneDeliveredPostsForUser(user.id)).toEqual(["old.epub"]);
+    expect(store.hasDeliveredPost(subscription.id, "https://example.substack.com/p/old", "old")).toBe(false);
+    expect(store.hasDeliveredPost(subscription.id, "https://example.substack.com/p/new", "new")).toBe(true);
   });
 });

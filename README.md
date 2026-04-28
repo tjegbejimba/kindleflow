@@ -58,7 +58,8 @@ Environment variables:
 | --- | --- | --- |
 | `PORT` | No | Host port for Docker Compose; defaults to `3000`. |
 | `APP_BASE_URL` | Yes for email login | Public/local URL used in magic login links, for example `http://100.104.13.117:3060`. |
-| `INVITE_CODE` | Yes for new users | Shared invite code required to create new accounts. |
+| `INVITE_CODES_FILE` | No | One-time invite-code file path; defaults to `DATA_DIR/invite-codes.txt`. |
+| `INVITE_CODE` | No | Legacy shared invite code fallback when `INVITE_CODES_FILE` does not exist. |
 | `COOKIE_SECURE` | No | Set `true` only when serving over HTTPS. |
 | `DATA_DIR` | No | Directory for generated EPUB files; defaults to `data`. |
 | `DB_PATH` | No | SQLite database path; defaults to `DATA_DIR/kindleflow.sqlite`. |
@@ -107,6 +108,7 @@ Example NAS `.env` for Tailscale access on port `3060`:
 PORT=3060
 APP_BASE_URL=http://100.104.13.117:3060
 INVITE_CODE=choose-a-private-invite-code
+INVITE_CODES_FILE=/app/data/invite-codes.txt
 COOKIE_SECURE=false
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
@@ -128,9 +130,23 @@ The SQLite database is stored at:
 /volume2/docker/projects/kindleflow/data/kindleflow.sqlite
 ```
 
+One-time invite codes can be stored at:
+
+```text
+/volume2/docker/projects/kindleflow/data/invite-codes.txt
+```
+
+Put one code per line. When a new user signs up, KindleFlow removes that code from `invite-codes.txt` and appends it to `invite-codes.used.txt` with the signup email and timestamp. If the invite-code file exists but is empty, new signups remain invite-gated and no new account can be created until another code is added.
+
+## Kindle approved sender
+
+KindleFlow shows the configured `SMTP_FROM` sender in the profile screen with a copy button and a link to Amazon’s Kindle settings. Each user still needs to add that sender to their Amazon “Approved Personal Document E-mail List”; Amazon does not provide a safe public URL that pre-fills this value automatically.
+
 ## Substack subscriptions
 
 Users can add a public Substack URL such as `https://example.substack.com`; KindleFlow polls the feed at `/feed` daily and sends newly seen posts to the user’s Kindle address. Existing feed posts are marked as seen when the subscription is added so the app does not flood a Kindle with backlog.
+
+Each user can choose how many days of subscription delivery history to keep, from 1 to 365 days. Daily polling skips posts older than that setting and prunes old delivered-post records plus generated EPUB files.
 
 Subscriber-only/private Substack posts are not implemented yet. Supporting them reliably will likely require an authenticated feed source, email-forwarding ingestion, or stored Substack session cookies, which is intentionally deferred.
 

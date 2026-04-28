@@ -6,6 +6,8 @@ interface AppConfig {
   emailDeliveryEnabled: boolean;
   inviteRequired: boolean;
   authRequired: boolean;
+  kindleApprovedSender?: string;
+  kindleSettingsUrl: string;
 }
 
 interface UserProfile {
@@ -14,6 +16,7 @@ interface UserProfile {
   verified: boolean;
   kindleEmail?: string;
   autoSendToKindle: boolean;
+  subscriptionRetentionDays: number;
 }
 
 interface ExtractedArticle {
@@ -52,6 +55,7 @@ function App() {
   const [inviteCode, setInviteCode] = React.useState("");
   const [kindleEmail, setKindleEmail] = React.useState("");
   const [autoSendToKindle, setAutoSendToKindle] = React.useState(true);
+  const [subscriptionRetentionDays, setSubscriptionRetentionDays] = React.useState(30);
   const [url, setUrl] = React.useState("");
   const [subscriptionUrl, setSubscriptionUrl] = React.useState("");
   const [result, setResult] = React.useState<FetchResult | null>(null);
@@ -82,6 +86,7 @@ function App() {
     setUser(nextUser);
     setKindleEmail(nextUser?.kindleEmail ?? "");
     setAutoSendToKindle(nextUser?.autoSendToKindle ?? true);
+    setSubscriptionRetentionDays(nextUser?.subscriptionRetentionDays ?? 30);
   }
 
   async function requestLoginLink(event: React.FormEvent) {
@@ -108,7 +113,11 @@ function App() {
     setStatus("Saving profile...");
 
     try {
-      const response = await apiPatch<{ user: UserProfile }>("/api/me", { kindleEmail, autoSendToKindle });
+      const response = await apiPatch<{ user: UserProfile }>("/api/me", {
+        kindleEmail,
+        autoSendToKindle,
+        subscriptionRetentionDays
+      });
       applyUser(response.user);
       setStatus("Profile saved.");
     } catch (err) {
@@ -302,6 +311,25 @@ function App() {
               Add your Kindle email address and approve the SMTP sender in Amazon’s “Approved Personal Document E-mail
               List.”
             </p>
+            {config?.kindleApprovedSender ? (
+              <div className="sender-help">
+                <p>
+                  Approved sender to add: <code>{config.kindleApprovedSender}</code>
+                </p>
+                <div className="action-buttons">
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => navigator.clipboard.writeText(config.kindleApprovedSender ?? "")}
+                  >
+                    Copy sender
+                  </button>
+                  <a className="button secondary-link" href={config.kindleSettingsUrl} target="_blank" rel="noreferrer">
+                    Open Amazon Kindle settings
+                  </a>
+                </div>
+              </div>
+            ) : null}
             <form onSubmit={saveProfile}>
               <label htmlFor="kindle-email">Kindle email address</label>
               <input
@@ -319,6 +347,19 @@ function App() {
                 />
                 Automatically send generated EPUBs to my Kindle
               </label>
+              <label htmlFor="retention-days">Keep subscription posts for</label>
+              <div className="retention-row">
+                <input
+                  id="retention-days"
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={subscriptionRetentionDays}
+                  onChange={(event) => setSubscriptionRetentionDays(Number(event.target.value))}
+                  required
+                />
+                <span>days</span>
+              </div>
               <button type="submit" disabled={isBusy}>
                 {busyAction === "profile" ? "Saving..." : "Save Kindle settings"}
               </button>

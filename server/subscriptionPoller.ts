@@ -1,3 +1,5 @@
+import { unlink } from "node:fs/promises";
+import path from "node:path";
 import type { FastifyBaseLogger } from "fastify";
 import type { AuthStore, SubscriptionWithUser } from "./authStore.js";
 import type { AppConfig } from "./config.js";
@@ -37,6 +39,11 @@ export async function pollSubscriptions(
     }
   }
 
+  const userIds = new Set(subscriptions.map((subscription) => subscription.userId));
+  for (const currentUserId of userIds) {
+    await deleteGeneratedFiles(config.dataDir, store.pruneDeliveredPostsForUser(currentUserId), logger);
+  }
+
   return { checked: subscriptions.length, delivered };
 }
 
@@ -50,6 +57,10 @@ async function pollSubscription(
   let delivered = 0;
 
   for (const post of [...feed.items].reverse()) {
+    if (isOlderThanRetention(post.publishedAt, subscription.subscriptionRetentionDays)) {
+      continue;
+    }
+
     if (store.hasDeliveredPost(subscription.id, post.url, post.guid)) {
       continue;
     }
@@ -76,4 +87,45 @@ async function pollSubscription(
   }
 
   return delivered;
+}
+
+function isOlderThanRetention(publishedAt: string | undefined, retentionDays: number): boolean {
+  if (!publishedAt) {
+    return false;
+  }
+
+  const publishedTime = Date.parse(publishedAt);
+  if (Number.isNaN(publishedTime)) {
+    return false;
+  }
+
+  return publishedTime < Date.now() - retentionDays * ONE_DAY_MS;
+}
+
+async function deleteGeneratedFiles(
+  dataDir: string,
+  filenames: string[],
+  logger: Pick<FastifyBaseLogger, "info" | "warn" | "error">
+): Promise<void> {
+  const resolvedDataDir = path.resolve(dataDir);
+  for (const filename of filenames) {
+    const safeFilename = path.basename(filename);
+    if (safeFilename !== filename || !safeFilename.endsWith(".epub")) {
+      logger.warn({ filename }, "skipping unsafe retained file deletion");
+      continue;
+    }
+
+    const absolutePath = path.resolve(resolvedDataDir, safeFilename);
+    if (!absolutePath.startsWith(`${resolvedDataDir}${path.sep}`)) {
+      logger.warn({ filename }, "skipping retained file outside data directory");
+      continue;
+    }
+
+    await unlink(absolutePath).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return;
+      }
+      throw error;
+    });
+  }
 }

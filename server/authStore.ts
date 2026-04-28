@@ -9,6 +9,7 @@ export interface UserProfile {
   verified: boolean;
   kindleEmail?: string;
   autoSendToKindle: boolean;
+  subscriptionRetentionDays: number;
 }
 
 export interface SubscriptionRecord {
@@ -31,6 +32,7 @@ export interface SubscriptionWithUser extends SubscriptionRecord {
   userEmail: string;
   kindleEmail?: string;
   autoSendToKindle: boolean;
+  subscriptionRetentionDays: number;
 }
 
 const MAGIC_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -56,7 +58,7 @@ export class AuthStore {
     let user = this.findUserByEmail(email);
 
     if (!user) {
-      if (!expectedInviteCode || inviteCode !== expectedInviteCode) {
+      if (inviteCode !== "__already_invited__" && (!expectedInviteCode || inviteCode !== expectedInviteCode)) {
         throw new Error("A valid invite code is required for new users.");
       }
 
@@ -104,6 +106,10 @@ export class AuthStore {
     return sessionToken;
   }
 
+  userExists(emailInput: string): boolean {
+    return Boolean(this.findUserByEmail(normalizeEmail(emailInput)));
+  }
+
   getUserBySession(sessionToken: string | undefined): UserProfile | null {
     if (!sessionToken) {
       return null;
@@ -112,13 +118,21 @@ export class AuthStore {
     const row = this.db
       .prepare(
         `SELECT users.id, users.email, users.verified_at AS verifiedAt, users.kindle_email AS kindleEmail,
-                users.auto_send_to_kindle AS autoSendToKindle
+                users.auto_send_to_kindle AS autoSendToKindle,
+                users.subscription_retention_days AS subscriptionRetentionDays
          FROM sessions
          JOIN users ON users.id = sessions.user_id
          WHERE sessions.token_hash = ? AND sessions.expires_at > ?`
       )
       .get(hashToken(sessionToken), Date.now()) as
-      | { id: string; email: string; verifiedAt?: string; kindleEmail?: string; autoSendToKindle: number }
+      | {
+          id: string;
+          email: string;
+          verifiedAt?: string;
+          kindleEmail?: string;
+          autoSendToKindle: number;
+          subscriptionRetentionDays: number;
+        }
       | undefined;
 
     return row ? toUserProfile(row) : null;
@@ -133,7 +147,7 @@ export class AuthStore {
 
   updateUserProfile(
     userId: string,
-    profile: { kindleEmail?: string | null; autoSendToKindle?: boolean }
+    profile: { kindleEmail?: string | null; autoSendToKindle?: boolean; subscriptionRetentionDays?: number }
   ): UserProfile {
     if (profile.kindleEmail !== undefined) {
       this.db
@@ -147,6 +161,12 @@ export class AuthStore {
         .run(profile.autoSendToKindle ? 1 : 0, userId);
     }
 
+    if (profile.subscriptionRetentionDays !== undefined) {
+      this.db
+        .prepare("UPDATE users SET subscription_retention_days = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(clampRetentionDays(profile.subscriptionRetentionDays), userId);
+    }
+
     const user = this.getUserById(userId);
     if (!user) {
       throw new Error("User not found.");
@@ -158,11 +178,19 @@ export class AuthStore {
     const row = this.db
       .prepare(
         `SELECT id, email, verified_at AS verifiedAt, kindle_email AS kindleEmail,
-                auto_send_to_kindle AS autoSendToKindle
+                auto_send_to_kindle AS autoSendToKindle,
+                subscription_retention_days AS subscriptionRetentionDays
          FROM users WHERE id = ?`
       )
       .get(userId) as
-      | { id: string; email: string; verifiedAt?: string; kindleEmail?: string; autoSendToKindle: number }
+      | {
+          id: string;
+          email: string;
+          verifiedAt?: string;
+          kindleEmail?: string;
+          autoSendToKindle: number;
+          subscriptionRetentionDays: number;
+        }
       | undefined;
     return row ? toUserProfile(row) : null;
   }
@@ -200,17 +228,24 @@ export class AuthStore {
       this.db
         .prepare(
           `SELECT subscriptions.*, users.email AS user_email, users.kindle_email AS kindle_email,
-                  users.auto_send_to_kindle AS auto_send_to_kindle
+                  users.auto_send_to_kindle AS auto_send_to_kindle,
+                  users.subscription_retention_days AS subscription_retention_days
            FROM subscriptions
            JOIN users ON users.id = subscriptions.user_id
            WHERE subscriptions.status = 'active'`
         )
-        .all() as unknown as (DbSubscription & { user_email: string; kindle_email?: string; auto_send_to_kindle: number })[]
+        .all() as unknown as (DbSubscription & {
+          user_email: string;
+          kindle_email?: string;
+          auto_send_to_kindle: number;
+          subscription_retention_days: number;
+        })[]
     ).map((row) => ({
       ...toSubscription(row),
       userEmail: row.user_email,
       kindleEmail: row.kindle_email || undefined,
-      autoSendToKindle: row.auto_send_to_kindle === 1
+      autoSendToKindle: row.auto_send_to_kindle === 1,
+      subscriptionRetentionDays: row.subscription_retention_days
     }));
   }
 
@@ -238,6 +273,39 @@ export class AuthStore {
       .run(randomUUID(), subscriptionId, post.url, post.guid ?? null, post.title, post.filename ?? null);
   }
 
+  pruneDeliveredPostsForUser(userId: string): string[] {
+    const user = this.getUserById(userId);
+    if (!user) {
+      throw new Error("User not found.");
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT delivered_posts.id, delivered_posts.filename
+         FROM delivered_posts
+         JOIN subscriptions ON subscriptions.id = delivered_posts.subscription_id
+         WHERE subscriptions.user_id = ?
+           AND delivered_posts.delivered_at < datetime('now', ?)`
+      )
+      .all(userId, `-${user.subscriptionRetentionDays} days`) as unknown as { id: string; filename?: string }[];
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    const ids = rows.map((row) => row.id);
+    const placeholders = ids.map(() => "?").join(", ");
+    this.db.prepare(`DELETE FROM delivered_posts WHERE id IN (${placeholders})`).run(...ids);
+
+    return rows.map((row) => row.filename).filter((filename): filename is string => Boolean(filename));
+  }
+
+  setDeliveredPostAgeForTest(postUrl: string, ageDays: number): void {
+    this.db
+      .prepare("UPDATE delivered_posts SET delivered_at = datetime('now', ?) WHERE post_url = ?")
+      .run(`-${ageDays} days`, postUrl);
+  }
+
   private getSubscription(id: string): SubscriptionRecord | null {
     const row = this.db.prepare("SELECT * FROM subscriptions WHERE id = ?").get(id) as DbSubscription | undefined;
     return row ? toSubscription(row) : null;
@@ -256,6 +324,7 @@ export class AuthStore {
         verified_at TEXT,
         kindle_email TEXT,
         auto_send_to_kindle INTEGER NOT NULL DEFAULT 1,
+        subscription_retention_days INTEGER NOT NULL DEFAULT 30,
         created_at TEXT NOT NULL,
         updated_at TEXT
       );
@@ -300,6 +369,14 @@ export class AuthStore {
         UNIQUE(subscription_id, post_url)
       );
     `);
+    this.addColumnIfMissing("users", "subscription_retention_days", "INTEGER NOT NULL DEFAULT 30");
+  }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[];
+    if (!columns.some((existing) => existing.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 }
 
@@ -342,14 +419,23 @@ function toUserProfile(row: {
   verifiedAt?: string;
   kindleEmail?: string;
   autoSendToKindle: number;
+  subscriptionRetentionDays: number;
 }): UserProfile {
   return {
     id: row.id,
     email: row.email,
     verified: Boolean(row.verifiedAt),
     kindleEmail: row.kindleEmail || undefined,
-    autoSendToKindle: row.autoSendToKindle === 1
+    autoSendToKindle: row.autoSendToKindle === 1,
+    subscriptionRetentionDays: row.subscriptionRetentionDays
   };
+}
+
+function clampRetentionDays(value: number): number {
+  if (!Number.isInteger(value)) {
+    throw new Error("Subscription retention must be a whole number of days.");
+  }
+  return Math.min(Math.max(value, 1), 365);
 }
 
 function toSubscription(row: DbSubscription): SubscriptionRecord {
