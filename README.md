@@ -12,6 +12,7 @@ Self-hosted article-to-Kindle app for personal use. Paste an article URL, extrac
 - Invite-only email magic-link login
 - Per-user Kindle email settings and automatic EPUB delivery
 - Public Substack/RSS subscriptions with daily polling and dedupe
+- Private OPDS catalogs for KOReader or other OPDS-capable readers
 - Docker Compose deployment for a Synology NAS
 
 ## Local development
@@ -149,6 +150,30 @@ Users can add a public Substack URL such as `https://example.substack.com`; Kind
 Each user can choose how many days of subscription delivery history to keep, from 1 to 365 days. Daily polling skips posts older than that setting and prunes old delivered-post records plus generated EPUB files.
 
 Subscriber-only/private Substack posts are not implemented yet. Supporting them reliably will likely require an authenticated feed source, email-forwarding ingestion, or stored Substack session cookies, which is intentionally deferred.
+
+## OPDS reader sync
+
+Each signed-in user has a private OPDS catalog URL in the “Reader sync” section of the web UI. OPDS is useful for KOReader and other ebook apps that can browse catalogs directly.
+
+Typical KOReader flow:
+
+1. Open KOReader.
+2. Open OPDS catalog settings.
+3. Add a new catalog using the private KindleFlow OPDS URL.
+4. Browse “Recent” or “Subscriptions.”
+5. Download EPUBs directly to the reader.
+
+The OPDS URL contains a private access token. Keep it secret. If it leaks, use “Rotate OPDS URL” in KindleFlow and update your reader with the new URL.
+
+### Kindle jailbreak note
+
+KOReader on Kindle requires a jailbroken Kindle plus launcher tooling such as KUAL/MRPI. For a Kindle 11th generation 2024 on firmware `5.19.3.0.1`, do not attempt WinterBreak or AdBreak unless the upstream KindleModding/MobileRead documentation changes:
+
+- WinterBreak is documented as not working on firmware `5.18.1` and newer.
+- AdBreak is documented for firmware `5.18.1` through `5.18.5.0.1`.
+- Firmware downgrades on modern Kindles are generally blocked by Amazon’s update/anti-rollback protections and are not recommended.
+
+KindleFlow’s OPDS support is still useful before a Kindle jailbreak is available because it works with other OPDS readers and keeps the server-side newsletter library ready.
 
 To update after changing code:
 

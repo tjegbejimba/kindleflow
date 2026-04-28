@@ -1,6 +1,7 @@
 import fastifyCookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import Fastify, { type FastifyRequest } from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { createReadStream } from "node:fs";
 import { access, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import { fetchFeed } from "./feed.js";
 import { FileInviteCodes } from "./inviteCodes.js";
 import { generateKindleFile } from "./kindleFile.js";
 import { sendFileToKindle, sendMagicLink } from "./mailer.js";
+import { renderOpdsAcquisitionFeed, renderOpdsNavigationFeed } from "./opds.js";
 import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionPoller.js";
 
 const config = loadConfig();
@@ -122,6 +124,18 @@ app.patch("/api/me", async (request) => {
   };
 });
 
+app.get("/api/me/opds", async (request) => {
+  const user = requireUser(request);
+  const token = store.ensureOpdsToken(user.id);
+  return { opdsUrl: `${config.appBaseUrl}/opds/${encodeURIComponent(token)}/catalog.xml` };
+});
+
+app.post("/api/me/opds/rotate", async (request) => {
+  const user = requireUser(request);
+  const token = store.rotateOpdsToken(user.id);
+  return { opdsUrl: `${config.appBaseUrl}/opds/${encodeURIComponent(token)}/catalog.xml` };
+});
+
 app.post("/api/articles/fetch", async (request) => {
   requireUser(request);
   const body = request.body as { url?: unknown };
@@ -161,6 +175,13 @@ app.post("/api/articles/generate", async (request) => {
     await sendFileToKindle(config.smtp, config.dataDir, generated.filename, user.kindleEmail);
     sentToKindle = true;
   }
+  store.addLibraryItem(user.id, {
+    type: "article",
+    title: body.title,
+    sourceUrl: typeof body.sourceUrl === "string" ? body.sourceUrl : undefined,
+    filename: generated.filename,
+    mimeType: generated.mimeType
+  });
 
   return {
     ...generated,
@@ -228,6 +249,121 @@ app.post("/api/subscriptions/poll", async (request) => {
   return pollSubscriptions(store, config, app.log, user.id);
 });
 
+app.get("/opds/:token/catalog.xml", async (request, reply) => {
+  const { token } = request.params as { token: string };
+  const user = requireOpdsUser(token);
+  return sendOpdsXml(
+    reply,
+    renderOpdsNavigationFeed({
+      id: `kindleflow:user:${user.id}:root`,
+      title: "KindleFlow",
+      updated: new Date().toISOString(),
+      entries: [
+        {
+          id: `kindleflow:user:${user.id}:recent`,
+          title: "Recent",
+          href: `/opds/${encodeURIComponent(token)}/recent.xml`
+        },
+        {
+          id: `kindleflow:user:${user.id}:subscriptions`,
+          title: "Subscriptions",
+          href: `/opds/${encodeURIComponent(token)}/subscriptions.xml`
+        }
+      ]
+    })
+  );
+});
+
+app.get("/opds/:token/recent.xml", async (request, reply) => {
+  const { token } = request.params as { token: string };
+  const user = requireOpdsUser(token);
+  return sendOpdsXml(
+    reply,
+    renderOpdsAcquisitionFeed({
+      id: `kindleflow:user:${user.id}:recent`,
+      title: "Recent KindleFlow EPUBs",
+      updated: new Date().toISOString(),
+      entries: store.listRecentLibraryItems(user.id).map((item) => ({
+        id: item.id,
+        title: item.title,
+        updated: item.createdAt,
+        sourceUrl: item.sourceUrl,
+        href: `/opds/${encodeURIComponent(token)}/files/${encodeURIComponent(item.filename)}`,
+        mimeType: item.mimeType
+      }))
+    })
+  );
+});
+
+app.get("/opds/:token/subscriptions.xml", async (request, reply) => {
+  const { token } = request.params as { token: string };
+  const user = requireOpdsUser(token);
+  return sendOpdsXml(
+    reply,
+    renderOpdsNavigationFeed({
+      id: `kindleflow:user:${user.id}:subscriptions`,
+      title: "KindleFlow Subscriptions",
+      updated: new Date().toISOString(),
+      entries: store.listLibrarySubscriptions(user.id).map((subscription) => ({
+        id: subscription.id,
+        title: `${subscription.title} (${subscription.itemCount})`,
+        href: `/opds/${encodeURIComponent(token)}/subscriptions/${encodeURIComponent(subscription.id)}.xml`
+      }))
+    })
+  );
+});
+
+app.get("/opds/:token/subscriptions/:subscriptionId.xml", async (request, reply) => {
+  const { token, subscriptionId } = request.params as { token: string; subscriptionId: string };
+  const user = requireOpdsUser(token);
+  const subscription = store.listSubscriptions(user.id).find((candidate) => candidate.id === subscriptionId);
+  if (!subscription) {
+    return reply.code(404).send({ message: "Subscription not found." });
+  }
+
+  return sendOpdsXml(
+    reply,
+    renderOpdsAcquisitionFeed({
+      id: `kindleflow:user:${user.id}:subscription:${subscriptionId}`,
+      title: subscription.title,
+      updated: new Date().toISOString(),
+      entries: store.listLibraryItemsBySubscription(user.id, subscriptionId).map((item) => ({
+        id: item.id,
+        title: item.title,
+        updated: item.createdAt,
+        sourceUrl: item.sourceUrl,
+        href: `/opds/${encodeURIComponent(token)}/files/${encodeURIComponent(item.filename)}`,
+        mimeType: item.mimeType
+      }))
+    })
+  );
+});
+
+app.get("/opds/:token/files/:filename", async (request, reply) => {
+  const { token, filename } = request.params as { token: string; filename: string };
+  requireOpdsUser(token);
+  const safeFilename = path.basename(filename);
+  if (safeFilename !== filename || !safeFilename.endsWith(".epub")) {
+    return reply.code(400).send({ message: "Invalid filename." });
+  }
+
+  const item = store.getLibraryItemForOpdsToken(token, safeFilename);
+  if (!item) {
+    return reply.code(404).send({ message: "File not found." });
+  }
+
+  const resolvedDataDir = path.resolve(config.dataDir);
+  const absolutePath = path.resolve(resolvedDataDir, safeFilename);
+  if (!absolutePath.startsWith(`${resolvedDataDir}${path.sep}`)) {
+    return reply.code(400).send({ message: "Invalid filename." });
+  }
+
+  return reply
+    .type(item.mimeType)
+    .header("content-disposition", `attachment; filename="${safeFilename.replaceAll('"', "")}"`)
+    .send(createReadStream(absolutePath));
+});
+
 startDailySubscriptionPoller(store, config, app.log);
 
 await app.listen({ host: config.host, port: config.port });
@@ -244,6 +380,20 @@ function requireUser(request: FastifyRequest): UserProfile {
     throw error;
   }
   return user;
+}
+
+function requireOpdsUser(token: string): UserProfile {
+  const user = store.getUserByOpdsToken(token);
+  if (!user) {
+    const error = new Error("Invalid OPDS token.");
+    Object.assign(error, { statusCode: 401 });
+    throw error;
+  }
+  return user;
+}
+
+function sendOpdsXml(reply: FastifyReply, xml: string) {
+  return reply.type("application/atom+xml;profile=opds-catalog").send(xml);
 }
 
 function sessionCookieOptions(secure: boolean) {

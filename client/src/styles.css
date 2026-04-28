@@ -249,6 +249,10 @@ form > button {
   flex-wrap: wrap;
 }
 
+.reader-actions {
+  margin: 1rem 0;
+}
+
 .subscription-list {
   display: grid;
   gap: 0.75rem;

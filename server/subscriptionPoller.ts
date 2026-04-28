@@ -77,6 +77,14 @@ async function pollSubscription(
     });
 
     await sendFileToKindle(config.smtp, config.dataDir, generated.filename, subscription.kindleEmail);
+    store.addLibraryItem(subscription.userId, {
+      type: "subscription_post",
+      subscriptionId: subscription.id,
+      title: fetched.article.title,
+      sourceUrl: fetched.sourceUrl,
+      filename: generated.filename,
+      mimeType: generated.mimeType
+    });
     store.markPostDelivered(subscription.id, {
       url: post.url,
       guid: post.guid,

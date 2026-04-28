@@ -51,6 +51,7 @@ function App() {
   const [config, setConfig] = React.useState<AppConfig | null>(null);
   const [user, setUser] = React.useState<UserProfile | null>(null);
   const [subscriptions, setSubscriptions] = React.useState<Subscription[]>([]);
+  const [opdsUrl, setOpdsUrl] = React.useState("");
   const [loginEmail, setLoginEmail] = React.useState("");
   const [inviteCode, setInviteCode] = React.useState("");
   const [kindleEmail, setKindleEmail] = React.useState("");
@@ -63,7 +64,7 @@ function App() {
   const [status, setStatus] = React.useState("");
   const [error, setError] = React.useState("");
   const [busyAction, setBusyAction] = React.useState<
-    "login" | "profile" | "fetch" | "generate" | "send" | "subscribe" | "poll" | "logout" | null
+    "login" | "profile" | "opds" | "fetch" | "generate" | "send" | "subscribe" | "poll" | "logout" | null
   >(null);
 
   React.useEffect(() => {
@@ -73,6 +74,7 @@ function App() {
         applyUser(me.user);
         if (me.user) {
           void loadSubscriptions();
+          void loadOpdsUrl();
         }
         if (new URLSearchParams(window.location.search).get("verified") === "1") {
           setStatus("You are signed in.");
@@ -137,6 +139,7 @@ function App() {
       setSubscriptions([]);
       setResult(null);
       setGeneratedFile(null);
+      setOpdsUrl("");
       setStatus("Signed out.");
     } catch (err) {
       setError(errorMessage(err));
@@ -243,6 +246,28 @@ function App() {
   async function loadSubscriptions() {
     const response = await apiGet<{ subscriptions: Subscription[] }>("/api/subscriptions");
     setSubscriptions(response.subscriptions);
+  }
+
+  async function loadOpdsUrl() {
+    const response = await apiGet<{ opdsUrl: string }>("/api/me/opds");
+    setOpdsUrl(response.opdsUrl);
+  }
+
+  async function rotateOpdsUrl() {
+    setBusyAction("opds");
+    setError("");
+    setStatus("Rotating OPDS URL...");
+
+    try {
+      const response = await apiPost<{ opdsUrl: string }>("/api/me/opds/rotate", {});
+      setOpdsUrl(response.opdsUrl);
+      setStatus("Reader sync URL rotated. Update any OPDS readers with the new URL.");
+    } catch (err) {
+      setStatus("");
+      setError(errorMessage(err));
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   const isBusy = busyAction !== null;
@@ -364,6 +389,29 @@ function App() {
                 {busyAction === "profile" ? "Saving..." : "Save Kindle settings"}
               </button>
             </form>
+          </section>
+
+          <section className="card">
+            <h2>Reader sync</h2>
+            <p className="muted">
+              Use this private OPDS catalog URL in KOReader or another OPDS reader to browse generated KindleFlow EPUBs.
+              Keep it private; rotating it invalidates the old URL.
+            </p>
+            <label htmlFor="opds-url">Private OPDS URL</label>
+            <div className="input-row">
+              <input id="opds-url" value={opdsUrl} readOnly />
+              <button type="button" onClick={() => navigator.clipboard.writeText(opdsUrl)} disabled={!opdsUrl}>
+                Copy
+              </button>
+            </div>
+            <div className="action-buttons reader-actions">
+              <button type="button" className="secondary" onClick={rotateOpdsUrl} disabled={isBusy}>
+                {busyAction === "opds" ? "Rotating..." : "Rotate OPDS URL"}
+              </button>
+            </div>
+            <p className="muted">
+              KOReader path: OPDS catalog → add catalog → paste this URL → open Recent or Subscriptions → download EPUBs.
+            </p>
           </section>
 
           <form className="card url-form" onSubmit={fetchArticle}>

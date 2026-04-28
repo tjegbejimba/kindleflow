@@ -12,6 +12,33 @@ export interface UserProfile {
   subscriptionRetentionDays: number;
 }
 
+export interface LibraryItem {
+  id: string;
+  userId: string;
+  type: "article" | "subscription_post";
+  subscriptionId?: string;
+  title: string;
+  sourceUrl?: string;
+  filename: string;
+  mimeType: "application/epub+zip";
+  createdAt: string;
+}
+
+export interface LibraryItemInput {
+  type: "article" | "subscription_post";
+  subscriptionId?: string;
+  title: string;
+  sourceUrl?: string;
+  filename: string;
+  mimeType: "application/epub+zip";
+}
+
+export interface LibrarySubscription {
+  id: string;
+  title: string;
+  itemCount: number;
+}
+
 export interface SubscriptionRecord {
   id: string;
   userId: string;
@@ -273,6 +300,116 @@ export class AuthStore {
       .run(randomUUID(), subscriptionId, post.url, post.guid ?? null, post.title, post.filename ?? null);
   }
 
+  ensureOpdsToken(userId: string): string {
+    const row = this.db.prepare("SELECT opds_token AS opdsToken FROM users WHERE id = ?").get(userId) as
+      | { opdsToken?: string }
+      | undefined;
+    if (!row) {
+      throw new Error("User not found.");
+    }
+
+    return row.opdsToken || this.rotateOpdsToken(userId);
+  }
+
+  rotateOpdsToken(userId: string): string {
+    const token = randomToken();
+    this.db.prepare("UPDATE users SET opds_token = ?, updated_at = datetime('now') WHERE id = ?").run(token, userId);
+    return token;
+  }
+
+  getUserByOpdsToken(token: string | undefined): UserProfile | null {
+    if (!token) {
+      return null;
+    }
+
+    const row = this.db
+      .prepare(
+        `SELECT id, email, verified_at AS verifiedAt, kindle_email AS kindleEmail,
+                auto_send_to_kindle AS autoSendToKindle,
+                subscription_retention_days AS subscriptionRetentionDays
+         FROM users WHERE opds_token = ?`
+      )
+      .get(token) as
+      | {
+          id: string;
+          email: string;
+          verifiedAt?: string;
+          kindleEmail?: string;
+          autoSendToKindle: number;
+          subscriptionRetentionDays: number;
+        }
+      | undefined;
+
+    return row ? toUserProfile(row) : null;
+  }
+
+  addLibraryItem(userId: string, input: LibraryItemInput): LibraryItem {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `INSERT INTO library_items
+           (id, user_id, type, subscription_id, title, source_url, filename, mime_type, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+      )
+      .run(
+        id,
+        userId,
+        input.type,
+        input.subscriptionId ?? null,
+        input.title,
+        input.sourceUrl ?? null,
+        input.filename,
+        input.mimeType
+      );
+
+    return this.getLibraryItem(id)!;
+  }
+
+  listRecentLibraryItems(userId: string, limit = 50): LibraryItem[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM library_items WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
+        .all(userId, limit) as unknown as DbLibraryItem[]
+    ).map(toLibraryItem);
+  }
+
+  listLibraryItemsBySubscription(userId: string, subscriptionId: string, limit = 50): LibraryItem[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM library_items
+           WHERE user_id = ? AND subscription_id = ?
+           ORDER BY created_at DESC, rowid DESC LIMIT ?`
+        )
+        .all(userId, subscriptionId, limit) as unknown as DbLibraryItem[]
+    ).map(toLibraryItem);
+  }
+
+  listLibrarySubscriptions(userId: string): LibrarySubscription[] {
+    return this.db
+      .prepare(
+        `SELECT subscriptions.id, subscriptions.title, COUNT(library_items.id) AS itemCount
+         FROM subscriptions
+         JOIN library_items ON library_items.subscription_id = subscriptions.id
+         WHERE subscriptions.user_id = ?
+         GROUP BY subscriptions.id, subscriptions.title
+         ORDER BY subscriptions.title COLLATE NOCASE ASC`
+      )
+      .all(userId) as unknown as LibrarySubscription[];
+  }
+
+  getLibraryItemForOpdsToken(token: string, filename: string): LibraryItem | null {
+    const user = this.getUserByOpdsToken(token);
+    if (!user) {
+      return null;
+    }
+
+    const row = this.db
+      .prepare("SELECT * FROM library_items WHERE user_id = ? AND filename = ?")
+      .get(user.id, filename) as DbLibraryItem | undefined;
+    return row ? toLibraryItem(row) : null;
+  }
+
   pruneDeliveredPostsForUser(userId: string): string[] {
     const user = this.getUserById(userId);
     if (!user) {
@@ -296,8 +433,15 @@ export class AuthStore {
     const ids = rows.map((row) => row.id);
     const placeholders = ids.map(() => "?").join(", ");
     this.db.prepare(`DELETE FROM delivered_posts WHERE id IN (${placeholders})`).run(...ids);
+    const filenames = rows.map((row) => row.filename).filter((filename): filename is string => Boolean(filename));
+    if (filenames.length > 0) {
+      const filenamePlaceholders = filenames.map(() => "?").join(", ");
+      this.db
+        .prepare(`DELETE FROM library_items WHERE user_id = ? AND filename IN (${filenamePlaceholders})`)
+        .run(userId, ...filenames);
+    }
 
-    return rows.map((row) => row.filename).filter((filename): filename is string => Boolean(filename));
+    return filenames;
   }
 
   setDeliveredPostAgeForTest(postUrl: string, ageDays: number): void {
@@ -309,6 +453,11 @@ export class AuthStore {
   private getSubscription(id: string): SubscriptionRecord | null {
     const row = this.db.prepare("SELECT * FROM subscriptions WHERE id = ?").get(id) as DbSubscription | undefined;
     return row ? toSubscription(row) : null;
+  }
+
+  private getLibraryItem(id: string): LibraryItem | null {
+    const row = this.db.prepare("SELECT * FROM library_items WHERE id = ?").get(id) as DbLibraryItem | undefined;
+    return row ? toLibraryItem(row) : null;
   }
 
   private findUserByEmail(email: string): { id: string } | null {
@@ -325,6 +474,7 @@ export class AuthStore {
         kindle_email TEXT,
         auto_send_to_kindle INTEGER NOT NULL DEFAULT 1,
         subscription_retention_days INTEGER NOT NULL DEFAULT 30,
+        opds_token TEXT UNIQUE,
         created_at TEXT NOT NULL,
         updated_at TEXT
       );
@@ -368,8 +518,23 @@ export class AuthStore {
         delivered_at TEXT NOT NULL,
         UNIQUE(subscription_id, post_url)
       );
+
+      CREATE TABLE IF NOT EXISTS library_items (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        subscription_id TEXT REFERENCES subscriptions(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        source_url TEXT,
+        filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(user_id, filename)
+      );
     `);
     this.addColumnIfMissing("users", "subscription_retention_days", "INTEGER NOT NULL DEFAULT 30");
+    this.addColumnIfMissing("users", "opds_token", "TEXT");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_opds_token ON users(opds_token)");
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
@@ -388,6 +553,18 @@ interface DbSubscription {
   title: string;
   status: "active" | "paused";
   last_checked_at?: string;
+}
+
+interface DbLibraryItem {
+  id: string;
+  user_id: string;
+  type: "article" | "subscription_post";
+  subscription_id?: string;
+  title: string;
+  source_url?: string;
+  filename: string;
+  mime_type: "application/epub+zip";
+  created_at: string;
 }
 
 function randomToken(): string {
@@ -447,5 +624,19 @@ function toSubscription(row: DbSubscription): SubscriptionRecord {
     title: row.title,
     status: row.status,
     lastCheckedAt: row.last_checked_at || undefined
+  };
+}
+
+function toLibraryItem(row: DbLibraryItem): LibraryItem {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    subscriptionId: row.subscription_id || undefined,
+    title: row.title,
+    sourceUrl: row.source_url || undefined,
+    filename: row.filename,
+    mimeType: row.mime_type,
+    createdAt: row.created_at
   };
 }
