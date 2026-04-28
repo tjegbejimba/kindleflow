@@ -1,0 +1,18 @@
+{
+  "name": "KindleFlow",
+  "short_name": "KindleFlow",
+  "description": "Self-hosted article and newsletter delivery for Kindle.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f0e8",
+  "theme_color": "#1d1a17",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

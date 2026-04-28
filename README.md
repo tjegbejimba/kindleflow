@@ -15,6 +15,7 @@ Self-hosted article-to-Kindle app for personal use. Paste an article URL, extrac
 - Kindle delivery history with SMTP response logging, test sends, latest-EPUB sends, and failed-send retry
 - Public Substack/RSS subscriptions with daily polling and dedupe
 - Private OPDS catalogs for KOReader or other OPDS-capable readers
+- PWA manifest/icon for installing from the browser
 - Docker Compose deployment for a Synology NAS
 
 ## Local development
@@ -126,6 +127,27 @@ SMTP_USER=your-address@gmail.com
 SMTP_PASS=your-google-app-password
 SMTP_FROM=your-address@gmail.com
 ```
+
+For HTTPS over Tailscale Serve, use the MagicDNS HTTPS URL as `APP_BASE_URL` and set secure cookies:
+
+```env
+APP_BASE_URL=https://tjnas.tail217062.ts.net
+COOKIE_SECURE=true
+```
+
+Then proxy Tailscale HTTPS to the local Docker port:
+
+```bash
+tailscale serve --bg --https=443 http://localhost:3060
+```
+
+On Synology, if `tailscale serve` reports `serve config denied`, grant the SSH user operator access once from an admin shell:
+
+```bash
+sudo tailscale set --operator=tjegbejimba
+```
+
+Then rerun the `tailscale serve` command and restart KindleFlow with the HTTPS `APP_BASE_URL`/`COOKIE_SECURE` values.
 
 Generated EPUB files persist in:
 

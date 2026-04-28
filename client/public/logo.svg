@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">KindleFlow</title>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#7a4a1f" />
+      <stop offset="1" stop-color="#1d1a17" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+  <rect x="88" y="74" width="336" height="364" rx="28" fill="#fffaf3" />
+  <path d="M128 126h256v14H128z" fill="#c27a2c" />
+  <path d="M144 178h224v154H144z" fill="#eadccb" />
+  <path d="M166 206h180v16H166zm0 42h148v16H166zm0 42h166v16H166z" fill="#8a5a24" opacity=".45" />
+  <path
+    d="M142 374h52v-74h28v74h52v-74h28v74h68v28H142v-28zm0-216h34v74l68-74h42l-72 78 78 92h-44l-62-74-10 10v64h-34V158z"
+    fill="#1d1a17"
+  />
+</svg>
