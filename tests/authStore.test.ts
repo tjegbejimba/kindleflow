@@ -36,6 +36,19 @@ describe("AuthStore", () => {
     });
   });
 
+  it("supports a configurable session lifetime", async () => {
+    store.close();
+    await rm(tempDir, { recursive: true, force: true });
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "kindleflow-auth-"));
+    store = new AuthStore(path.join(tempDir, "kindleflow.sqlite"), { sessionTtlMs: 1 });
+
+    const magicToken = store.createLoginToken("short@example.com", "secret", "secret");
+    const sessionToken = store.consumeMagicToken(magicToken);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(store.getUserBySession(sessionToken)).toBeNull();
+  });
+
   it("stores a per-user Kindle email and dedupes subscriptions", () => {
     const token = store.createLoginToken("reader@example.com", "secret", "secret");
     const session = store.consumeMagicToken(token);

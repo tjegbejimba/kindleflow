@@ -9,6 +9,7 @@ export interface AppConfig {
   appBaseUrl: string;
   inviteCode?: string;
   cookieSecure: boolean;
+  sessionTtlDays: number;
   smtp?: SmtpConfig;
 }
 
@@ -32,6 +33,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     appBaseUrl: (env.APP_BASE_URL ?? `http://localhost:${env.PORT ?? 3000}`).replace(/\/$/, ""),
     inviteCode: env.INVITE_CODE,
     cookieSecure: env.COOKIE_SECURE === "true",
+    sessionTtlDays: parsePositiveInteger(env.SESSION_TTL_DAYS, 180),
     smtp
   };
 }
@@ -56,4 +58,12 @@ function loadSmtpConfig(env: NodeJS.ProcessEnv): SmtpConfig | undefined {
     pass: env.SMTP_PASS,
     from
   };
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }

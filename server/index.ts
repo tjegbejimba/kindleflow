@@ -17,7 +17,7 @@ import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionP
 
 const config = loadConfig();
 const app = Fastify({ logger: true });
-const store = new AuthStore(config.dbPath);
+const store = new AuthStore(config.dbPath, { sessionTtlMs: daysToMs(config.sessionTtlDays) });
 const inviteCodes = new FileInviteCodes(config.inviteCodesFile);
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const clientDist = path.join(projectRoot, "client", "dist");
@@ -91,7 +91,7 @@ app.get("/api/auth/verify", async (request, reply) => {
   }
 
   const sessionToken = store.consumeMagicToken(query.token);
-  reply.setCookie(SESSION_COOKIE, sessionToken, sessionCookieOptions(config.cookieSecure));
+  reply.setCookie(SESSION_COOKIE, sessionToken, sessionCookieOptions(config.cookieSecure, config.sessionTtlDays));
   return reply.redirect("/?verified=1");
 });
 
@@ -101,9 +101,15 @@ app.post("/api/auth/logout", async (request, reply) => {
   return { loggedOut: true };
 });
 
-app.get("/api/me", async (request) => ({
-  user: getCurrentUser(request)
-}));
+app.get("/api/me", async (request, reply) => {
+  const sessionToken = request.cookies[SESSION_COOKIE];
+  const user = store.getUserBySession(sessionToken);
+  if (user && sessionToken) {
+    store.refreshSession(sessionToken);
+    reply.setCookie(SESSION_COOKIE, sessionToken, sessionCookieOptions(config.cookieSecure, config.sessionTtlDays));
+  }
+  return { user };
+});
 
 app.patch("/api/me", async (request) => {
   const user = requireUser(request);
@@ -396,12 +402,16 @@ function sendOpdsXml(reply: FastifyReply, xml: string) {
   return reply.type("application/atom+xml;profile=opds-catalog").send(xml);
 }
 
-function sessionCookieOptions(secure: boolean) {
+function sessionCookieOptions(secure: boolean, ttlDays: number) {
   return {
     path: "/",
     httpOnly: true,
     sameSite: "lax" as const,
     secure,
-    maxAge: 30 * 24 * 60 * 60
+    maxAge: ttlDays * 24 * 60 * 60
   };
+}
+
+function daysToMs(days: number): number {
+  return days * 24 * 60 * 60 * 1000;
 }

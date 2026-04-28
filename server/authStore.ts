@@ -63,12 +63,14 @@ export interface SubscriptionWithUser extends SubscriptionRecord {
 }
 
 const MAGIC_TOKEN_TTL_MS = 15 * 60 * 1000;
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const DEFAULT_SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
 export class AuthStore {
   private readonly db: DatabaseSync;
+  private readonly sessionTtlMs: number;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options: { sessionTtlMs?: number } = {}) {
+    this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
     mkdirSync(path.dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
     this.db.exec("PRAGMA journal_mode = WAL");
@@ -128,7 +130,7 @@ export class AuthStore {
     const sessionToken = randomToken();
     this.db
       .prepare("INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
-      .run(randomUUID(), row.userId, hashToken(sessionToken), now + SESSION_TTL_MS);
+      .run(randomUUID(), row.userId, hashToken(sessionToken), now + this.sessionTtlMs);
 
     return sessionToken;
   }
@@ -163,6 +165,15 @@ export class AuthStore {
       | undefined;
 
     return row ? toUserProfile(row) : null;
+  }
+
+  refreshSession(sessionToken: string | undefined): void {
+    if (!sessionToken) {
+      return;
+    }
+    this.db
+      .prepare("UPDATE sessions SET expires_at = ? WHERE token_hash = ? AND expires_at > ?")
+      .run(Date.now() + this.sessionTtlMs, hashToken(sessionToken), Date.now());
   }
 
   destroySession(sessionToken: string | undefined): void {

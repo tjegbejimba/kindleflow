@@ -62,6 +62,7 @@ Environment variables:
 | `INVITE_CODES_FILE` | No | One-time invite-code file path; defaults to `DATA_DIR/invite-codes.txt`. |
 | `INVITE_CODE` | No | Legacy shared invite code fallback when `INVITE_CODES_FILE` does not exist. |
 | `COOKIE_SECURE` | No | Set `true` only when serving over HTTPS. |
+| `SESSION_TTL_DAYS` | No | Browser login session lifetime; defaults to `180` and refreshes on visits. |
 | `DATA_DIR` | No | Directory for generated EPUB files; defaults to `data`. |
 | `DB_PATH` | No | SQLite database path; defaults to `DATA_DIR/kindleflow.sqlite`. |
 | `SMTP_HOST` | For email | SMTP server hostname. |
@@ -72,6 +73,8 @@ Environment variables:
 | `SMTP_FROM` | For email | Approved sender address for Kindle delivery. |
 
 If `SMTP_HOST` or `SMTP_FROM` are missing, users cannot receive magic login links or Kindle delivery emails. Do not commit real SMTP credentials.
+
+Login sessions are stored in an HTTP-only browser cookie. Use one consistent app URL for both `APP_BASE_URL` and browsing the site because cookies are scoped to the exact host; for example, a login cookie from `http://100.104.13.117:3060` will not apply when visiting the Tailscale hostname.
 
 ### Gmail SMTP
 
@@ -111,6 +114,7 @@ APP_BASE_URL=http://100.104.13.117:3060
 INVITE_CODE=choose-a-private-invite-code
 INVITE_CODES_FILE=/app/data/invite-codes.txt
 COOKIE_SECURE=false
+SESSION_TTL_DAYS=180
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
