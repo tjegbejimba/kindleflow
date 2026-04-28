@@ -1,0 +1,267 @@
+:root {
+  color: #1d1a17;
+  background: #f6f0e8;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+.button {
+  border: 0;
+  border-radius: 999px;
+  background: #1d1a17;
+  color: #fffaf3;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0.85rem 1.15rem;
+  text-align: center;
+  text-decoration: none;
+  transition:
+    transform 120ms ease,
+    opacity 120ms ease;
+}
+
+button.secondary {
+  background: #eadccb;
+  color: #1d1a17;
+}
+
+button:hover,
+.button:hover {
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  transform: none;
+}
+
+input {
+  width: 100%;
+  border: 1px solid #dbcdbb;
+  border-radius: 1rem;
+  background: #fffaf3;
+  color: #1d1a17;
+  font: inherit;
+  padding: 0.95rem 1rem;
+}
+
+input[type="checkbox"] {
+  width: auto;
+}
+
+label {
+  display: block;
+  font-weight: 800;
+  margin-bottom: 0.75rem;
+}
+
+form > button {
+  margin-top: 1rem;
+}
+
+.shell {
+  width: min(980px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 3rem 0;
+}
+
+.hero {
+  margin-bottom: 1.5rem;
+}
+
+.hero h1 {
+  font-size: clamp(2.4rem, 7vw, 5.25rem);
+  letter-spacing: -0.07em;
+  line-height: 0.95;
+  margin: 0;
+}
+
+.lede {
+  color: #5d5349;
+  font-size: 1.15rem;
+  line-height: 1.55;
+  max-width: 42rem;
+}
+
+.eyebrow {
+  color: #8a5a24;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  margin: 0 0 0.5rem;
+  text-transform: uppercase;
+}
+
+.card {
+  background: rgba(255, 250, 243, 0.9);
+  border: 1px solid rgba(219, 205, 187, 0.9);
+  border-radius: 1.5rem;
+  box-shadow: 0 20px 60px rgba(51, 38, 24, 0.08);
+  margin: 1rem 0;
+  padding: 1.25rem;
+}
+
+.input-row,
+.preview-heading,
+.actions,
+.action-buttons,
+.account-card {
+  display: flex;
+  gap: 1rem;
+}
+
+.input-row {
+  align-items: center;
+}
+
+.input-row button {
+  flex: 0 0 auto;
+}
+
+.status,
+.error {
+  border-radius: 1rem;
+  font-weight: 700;
+  padding: 1rem 1.25rem;
+}
+
+.status {
+  background: #e7f4dc;
+  color: #2d551f;
+}
+
+.error {
+  background: #ffe1dd;
+  color: #8a1f12;
+}
+
+.muted {
+  color: #6f6257;
+  line-height: 1.55;
+}
+
+.checkbox-row {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.preview-heading {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.account-card {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.preview h2,
+.actions h2 {
+  font-size: clamp(1.6rem, 4vw, 2.6rem);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  margin: 0;
+}
+
+.byline {
+  color: #6f6257;
+  font-weight: 700;
+}
+
+.article-body {
+  border-top: 1px solid #eadccb;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  font-size: 1.12rem;
+  line-height: 1.72;
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+}
+
+.article-body a {
+  color: #8a5a24;
+  font-weight: 700;
+}
+
+.article-body blockquote {
+  border-left: 4px solid #d1b28a;
+  color: #4f463e;
+  margin-left: 0;
+  padding-left: 1rem;
+}
+
+.actions {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.actions p {
+  color: #6f6257;
+  margin: 0.5rem 0 0;
+}
+
+.action-buttons {
+  flex-wrap: wrap;
+}
+
+.subscription-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.subscription {
+  background: #f6f0e8;
+  border: 1px solid #eadccb;
+  border-radius: 1rem;
+  display: grid;
+  gap: 0.25rem;
+  padding: 1rem;
+}
+
+.subscription span,
+.subscription small {
+  color: #6f6257;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: min(100% - 1rem, 980px);
+    padding: 1rem 0;
+  }
+
+  .card {
+    border-radius: 1.1rem;
+    padding: 1rem;
+  }
+
+  .input-row,
+  .preview-heading,
+  .actions,
+  .account-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  button,
+  .button {
+    width: 100%;
+  }
+}
