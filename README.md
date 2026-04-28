@@ -128,7 +128,7 @@ SMTP_PASS=your-google-app-password
 SMTP_FROM=your-address@gmail.com
 ```
 
-For HTTPS over Tailscale Serve, use the MagicDNS HTTPS URL as `APP_BASE_URL` and set secure cookies:
+For HTTPS over the NAS Tailscale node, use the MagicDNS HTTPS URL as `APP_BASE_URL` and set secure cookies:
 
 ```env
 APP_BASE_URL=https://tjnas.tail217062.ts.net
@@ -154,6 +154,21 @@ Generated EPUB files persist in:
 ```text
 /volume2/docker/projects/kindleflow/data
 ```
+
+## Tailscale app hostname
+
+KindleFlow can also run behind a dedicated Tailscale sidecar node named `kindleflow`, matching the pattern used by `alisterr`. This keeps the NAS hostname as `tjnas` while making the app available at `https://kindleflow.tail217062.ts.net`.
+
+Set a reusable/pre-authorized Tailscale auth key in `.env`:
+
+```env
+COMPOSE_PROFILES=tailscale
+TS_AUTHKEY=tskey-auth-...
+APP_BASE_URL=https://kindleflow.tail217062.ts.net
+COOKIE_SECURE=true
+```
+
+The Compose stack starts `tailscale-kindleflow` and loads `tailscale/config/serve.json` so Tailscale HTTPS proxies to the app container on port `3000`. The legacy host-port path still works through `PORT=3060`, but magic links and OPDS URLs should use `APP_BASE_URL`.
 
 The SQLite database is stored at:
 
