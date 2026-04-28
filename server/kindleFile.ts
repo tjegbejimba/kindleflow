@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import type { Content, Options } from "epub-gen-memory";
 import type { ExtractedArticle } from "./articleExtraction.js";
+import { generateCoverPng } from "./coverImage.js";
 
 type EpubGenerator = (optionsOrTitle: Options | string, content: Content, ...args: (boolean | number)[]) => Promise<Buffer>;
 
@@ -37,6 +38,9 @@ export async function generateKindleFile(
 
   await mkdir(dataDir, { recursive: true });
 
+  const cover = new File([new Uint8Array(generateCoverPng({ title: article.title, sourceUrl: options.sourceUrl }))], "cover.png", {
+    type: "image/png"
+  });
   const sourceLink = options.sourceUrl
     ? `<hr /><p><em>Original article:</em> <a href="${escapeHtml(options.sourceUrl)}">${escapeHtml(options.sourceUrl)}</a></p>`
     : "";
@@ -46,6 +50,7 @@ export async function generateKindleFile(
       author: "KindleFlow",
       publisher: "KindleFlow",
       lang: "en",
+      cover,
       css: `
         body { font-family: serif; line-height: 1.45; margin: 5%; }
         h1, h2, h3 { line-height: 1.2; }

@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { generateCoverPng } from "../server/coverImage.js";
 import { generateKindleFile } from "../server/kindleFile.js";
 
 let tempDir: string;
@@ -31,5 +32,17 @@ describe("generateKindleFile", () => {
 
     const bytes = await readFile(file.absolutePath);
     expect(bytes.subarray(0, 2).toString()).toBe("PK");
+    expect(bytes.includes(Buffer.from("cover.png"))).toBe(true);
+  });
+
+  it("generates a local PNG cover image for Kindle library thumbnails", () => {
+    const cover = generateCoverPng({
+      title: "A Clean Kindle Article!",
+      sourceUrl: "https://example.com/articles/clean"
+    });
+
+    expect(cover.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(cover.includes(Buffer.from("IHDR"))).toBe(true);
+    expect(cover.includes(Buffer.from("IDAT"))).toBe(true);
   });
 });

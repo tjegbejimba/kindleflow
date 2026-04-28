@@ -9,6 +9,7 @@ Self-hosted article-to-Kindle app for personal use. Paste an article URL, extrac
 - SSRF-safe URL validation for direct URLs and redirects
 - Sanitized article preview and EPUB content
 - EPUB generation into a persistent data directory
+- Generated local PNG covers embedded in each EPUB for nicer Kindle library thumbnails
 - Invite-only email magic-link login
 - Per-user Kindle email settings and automatic EPUB delivery
 - Kindle delivery history with SMTP response logging, test sends, latest-EPUB sends, and failed-send retry
