@@ -11,6 +11,7 @@ Self-hosted article-to-Kindle app for personal use. Paste an article URL, extrac
 - EPUB generation into a persistent data directory
 - Invite-only email magic-link login
 - Per-user Kindle email settings and automatic EPUB delivery
+- Kindle delivery history with SMTP response logging, test sends, latest-EPUB sends, and failed-send retry
 - Public Substack/RSS subscriptions with daily polling and dedupe
 - Private OPDS catalogs for KOReader or other OPDS-capable readers
 - Docker Compose deployment for a Synology NAS
@@ -90,6 +91,8 @@ SMTP_FROM=your-address@gmail.com
 ```
 
 For Kindle delivery, each user adds their own `@kindle.com` address in the app. In Amazon’s Kindle settings, add `SMTP_FROM` to the “Approved Personal Document E-mail List”; otherwise Amazon will reject the EPUB attachment.
+
+KindleFlow records each Kindle email attempt in delivery history. A `sent` status means the configured SMTP server accepted the message; Amazon can still reject or delay it afterward if the sender is not approved, the Kindle address is wrong, or Personal Document delivery has a problem. Use “Send test EPUB” to validate the Amazon side, “Send latest EPUB now” to re-send the newest generated item, and “Retry” on failed delivery rows after fixing configuration.
 
 ## Docker Compose deployment
 

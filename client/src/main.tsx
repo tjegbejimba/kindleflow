@@ -37,6 +37,7 @@ interface GeneratedFile {
   filename: string;
   downloadUrl: string;
   sentToKindle: boolean;
+  delivery?: KindleDelivery;
 }
 
 interface Subscription {
@@ -47,10 +48,26 @@ interface Subscription {
   lastCheckedAt?: string;
 }
 
+interface KindleDelivery {
+  id: string;
+  title: string;
+  filename: string;
+  kindleEmail: string;
+  trigger: "auto" | "manual" | "subscription" | "test" | "retry";
+  status: "pending" | "sent" | "failed";
+  attempts: number;
+  messageId?: string;
+  response?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 function App() {
   const [config, setConfig] = React.useState<AppConfig | null>(null);
   const [user, setUser] = React.useState<UserProfile | null>(null);
   const [subscriptions, setSubscriptions] = React.useState<Subscription[]>([]);
+  const [deliveries, setDeliveries] = React.useState<KindleDelivery[]>([]);
   const [opdsUrl, setOpdsUrl] = React.useState("");
   const [loginEmail, setLoginEmail] = React.useState("");
   const [inviteCode, setInviteCode] = React.useState("");
@@ -64,7 +81,19 @@ function App() {
   const [status, setStatus] = React.useState("");
   const [error, setError] = React.useState("");
   const [busyAction, setBusyAction] = React.useState<
-    "login" | "profile" | "opds" | "fetch" | "generate" | "send" | "subscribe" | "poll" | "logout" | null
+    | "login"
+    | "profile"
+    | "opds"
+    | "fetch"
+    | "generate"
+    | "send"
+    | "testDelivery"
+    | "latestDelivery"
+    | "retryDelivery"
+    | "subscribe"
+    | "poll"
+    | "logout"
+    | null
   >(null);
 
   React.useEffect(() => {
@@ -75,6 +104,7 @@ function App() {
         if (me.user) {
           void loadSubscriptions();
           void loadOpdsUrl();
+          void loadDeliveries();
         }
         if (new URLSearchParams(window.location.search).get("verified") === "1") {
           setStatus("You are signed in.");
@@ -137,6 +167,7 @@ function App() {
       await apiPost("/api/auth/logout", {});
       applyUser(null);
       setSubscriptions([]);
+      setDeliveries([]);
       setResult(null);
       setGeneratedFile(null);
       setOpdsUrl("");
@@ -180,7 +211,8 @@ function App() {
         sourceUrl: result.sourceUrl
       });
       setGeneratedFile(response);
-      setStatus(response.sentToKindle ? "EPUB generated and sent to your Kindle." : "EPUB generated.");
+      await loadDeliveries();
+      setStatus(deliveryStatusMessage(response.delivery, "EPUB generated."));
     } catch (err) {
       setError(errorMessage(err));
       setStatus("");
@@ -196,9 +228,12 @@ function App() {
     setStatus("Sending to Kindle...");
 
     try {
-      await apiPost("/api/articles/send", { filename: generatedFile.filename });
-      setStatus("Sent to Kindle.");
-      setGeneratedFile({ ...generatedFile, sentToKindle: true });
+      const response = await apiPost<{ sent: boolean; delivery: KindleDelivery }>("/api/articles/send", {
+        filename: generatedFile.filename
+      });
+      await loadDeliveries();
+      setStatus(deliveryStatusMessage(response.delivery, "Sent to Kindle."));
+      setGeneratedFile({ ...generatedFile, sentToKindle: response.sent, delivery: response.delivery });
     } catch (err) {
       setError(errorMessage(err));
       setStatus("");
@@ -234,6 +269,7 @@ function App() {
     try {
       const result = await apiPost<{ checked: number; delivered: number }>("/api/subscriptions/poll", {});
       await loadSubscriptions();
+      await loadDeliveries();
       setStatus(`Checked ${result.checked} subscription(s), delivered ${result.delivered} new post(s).`);
     } catch (err) {
       setStatus("");
@@ -246,6 +282,11 @@ function App() {
   async function loadSubscriptions() {
     const response = await apiGet<{ subscriptions: Subscription[] }>("/api/subscriptions");
     setSubscriptions(response.subscriptions);
+  }
+
+  async function loadDeliveries() {
+    const response = await apiGet<{ deliveries: KindleDelivery[] }>("/api/deliveries");
+    setDeliveries(response.deliveries);
   }
 
   async function loadOpdsUrl() {
@@ -262,6 +303,57 @@ function App() {
       const response = await apiPost<{ opdsUrl: string }>("/api/me/opds/rotate", {});
       setOpdsUrl(response.opdsUrl);
       setStatus("Reader sync URL rotated. Update any OPDS readers with the new URL.");
+    } catch (err) {
+      setStatus("");
+      setError(errorMessage(err));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function sendLatestToKindle() {
+    setBusyAction("latestDelivery");
+    setError("");
+    setStatus("Sending latest EPUB to Kindle...");
+
+    try {
+      const response = await apiPost<{ delivery: KindleDelivery }>("/api/deliveries/latest", {});
+      await loadDeliveries();
+      setStatus(deliveryStatusMessage(response.delivery, "Latest EPUB sent to Kindle."));
+    } catch (err) {
+      setStatus("");
+      setError(errorMessage(err));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function sendTestToKindle() {
+    setBusyAction("testDelivery");
+    setError("");
+    setStatus("Sending a test EPUB to Kindle...");
+
+    try {
+      const response = await apiPost<{ delivery: KindleDelivery }>("/api/deliveries/test", {});
+      await loadDeliveries();
+      setStatus(deliveryStatusMessage(response.delivery, "Test EPUB sent to Kindle."));
+    } catch (err) {
+      setStatus("");
+      setError(errorMessage(err));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function retryDelivery(deliveryId: string) {
+    setBusyAction("retryDelivery");
+    setError("");
+    setStatus("Retrying Kindle delivery...");
+
+    try {
+      const response = await apiPost<{ delivery: KindleDelivery }>(`/api/deliveries/${deliveryId}/retry`, {});
+      await loadDeliveries();
+      setStatus(deliveryStatusMessage(response.delivery, "Delivery retry sent to Kindle."));
     } catch (err) {
       setStatus("");
       setError(errorMessage(err));
@@ -389,6 +481,65 @@ function App() {
                 {busyAction === "profile" ? "Saving..." : "Save Kindle settings"}
               </button>
             </form>
+            <div className="delivery-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={sendTestToKindle}
+                disabled={isBusy || !config?.emailDeliveryEnabled || !user.kindleEmail}
+              >
+                {busyAction === "testDelivery" ? "Sending test..." : "Send test EPUB"}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={sendLatestToKindle}
+                disabled={isBusy || !config?.emailDeliveryEnabled || !user.kindleEmail}
+              >
+                {busyAction === "latestDelivery" ? "Sending latest..." : "Send latest EPUB now"}
+              </button>
+            </div>
+            <p className="muted">
+              Delivery history shows whether Gmail accepted the message. Amazon can still reject it later if the sender is
+              not approved or the Kindle address is wrong.
+            </p>
+          </section>
+
+          <section className="card">
+            <div className="preview-heading">
+              <div>
+                <h2>Kindle delivery history</h2>
+                <p className="muted">Recent send attempts, SMTP responses, and errors for Kindle email delivery.</p>
+              </div>
+              <button type="button" className="secondary" onClick={loadDeliveries} disabled={isBusy}>
+                Refresh
+              </button>
+            </div>
+            {deliveries.length > 0 ? (
+              <div className="delivery-list">
+                {deliveries.map((delivery) => (
+                  <article className={`delivery delivery-${delivery.status}`} key={delivery.id}>
+                    <div>
+                      <strong>{delivery.title}</strong>
+                      <span>{delivery.filename}</span>
+                      <small>
+                        {deliveryStatusLabel(delivery)} · {delivery.trigger} · {formatDate(delivery.updatedAt)}
+                      </small>
+                      {delivery.response ? <small>SMTP: {delivery.response}</small> : null}
+                      {delivery.messageId ? <small>Message ID: {delivery.messageId}</small> : null}
+                      {delivery.error ? <small className="delivery-error">Error: {delivery.error}</small> : null}
+                    </div>
+                    {delivery.status === "failed" ? (
+                      <button type="button" onClick={() => retryDelivery(delivery.id)} disabled={isBusy}>
+                        {busyAction === "retryDelivery" ? "Retrying..." : "Retry"}
+                      </button>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">No Kindle delivery attempts yet.</p>
+            )}
           </section>
 
           <section className="card">
@@ -545,6 +696,40 @@ async function readApiResponse<T>(response: Response): Promise<T> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function deliveryStatusMessage(delivery: KindleDelivery | undefined, fallback: string): string {
+  if (!delivery) {
+    return fallback;
+  }
+  if (delivery.status === "sent") {
+    return `${fallback} Gmail accepted the Kindle email; check Amazon delivery if it does not appear soon.`;
+  }
+  if (delivery.status === "failed") {
+    return `${fallback} Kindle email failed: ${delivery.error ?? "unknown error"}`;
+  }
+  return fallback;
+}
+
+function deliveryStatusLabel(delivery: KindleDelivery): string {
+  if (delivery.status === "sent") {
+    return `SMTP accepted after ${delivery.attempts} attempt(s)`;
+  }
+  if (delivery.status === "failed") {
+    return `Failed after ${delivery.attempts} attempt(s)`;
+  }
+  return "Pending";
+}
+
+function formatDate(value: string): string {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(parsed);
 }
 
 createRoot(document.getElementById("root")!).render(

@@ -253,6 +253,54 @@ form > button {
   margin: 1rem 0;
 }
 
+.delivery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.delivery-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.delivery {
+  align-items: flex-start;
+  background: #f6f0e8;
+  border: 1px solid #eadccb;
+  border-radius: 1rem;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 1rem;
+}
+
+.delivery strong,
+.delivery span,
+.delivery small {
+  display: block;
+}
+
+.delivery span,
+.delivery small {
+  color: #6f6257;
+  margin-top: 0.25rem;
+}
+
+.delivery-sent {
+  border-color: #aac996;
+}
+
+.delivery-failed {
+  border-color: #de9a90;
+}
+
+.delivery-error {
+  color: #8a1f12 !important;
+}
+
 .subscription-list {
   display: grid;
   gap: 0.75rem;

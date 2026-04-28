@@ -5,9 +5,9 @@ import { createReadStream } from "node:fs";
 import { access, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { AuthStore, type UserProfile } from "./authStore.js";
+import { AuthStore, type KindleDelivery, type LibraryItem, type UserProfile } from "./authStore.js";
 import { fetchAndExtractArticle } from "./articleFetcher.js";
-import { isEmailDeliveryEnabled, loadConfig } from "./config.js";
+import { isEmailDeliveryEnabled, loadConfig, type SmtpConfig } from "./config.js";
 import { fetchFeed } from "./feed.js";
 import { FileInviteCodes } from "./inviteCodes.js";
 import { generateKindleFile } from "./kindleFile.js";
@@ -176,48 +176,116 @@ app.post("/api/articles/generate", async (request) => {
       sourceUrl: typeof body.sourceUrl === "string" ? body.sourceUrl : undefined
     }
   );
-  let sentToKindle = false;
-  if (config.smtp && user.kindleEmail && user.autoSendToKindle) {
-    await sendFileToKindle(config.smtp, config.dataDir, generated.filename, user.kindleEmail);
-    sentToKindle = true;
-  }
-  store.addLibraryItem(user.id, {
+  const libraryItem = store.addLibraryItem(user.id, {
     type: "article",
     title: body.title,
     sourceUrl: typeof body.sourceUrl === "string" ? body.sourceUrl : undefined,
     filename: generated.filename,
     mimeType: generated.mimeType
   });
+  const delivery =
+    config.smtp && user.kindleEmail && user.autoSendToKindle
+      ? await sendKindleDelivery(user, libraryItem, "auto")
+      : undefined;
 
   return {
     ...generated,
     absolutePath: undefined,
     downloadUrl: `/files/${encodeURIComponent(generated.filename)}`,
-    sentToKindle
+    sentToKindle: delivery?.status === "sent",
+    delivery
   };
 });
 
 app.post("/api/articles/send", async (request) => {
   const user = requireUser(request);
-  if (!config.smtp) {
-    const error = new Error("Kindle email delivery is not configured.");
-    Object.assign(error, { statusCode: 400 });
-    throw error;
-  }
+  getKindleDeliveryConfig(user);
 
   const body = request.body as { filename?: unknown };
   if (typeof body.filename !== "string") {
     throw new Error("Generated filename is required.");
   }
 
-  if (!user.kindleEmail) {
-    const error = new Error("Add your Kindle email address before sending files.");
+  const safeFilename = path.basename(body.filename);
+  if (safeFilename !== body.filename || !safeFilename.endsWith(".epub")) {
+    const error = new Error("Invalid generated file name.");
     Object.assign(error, { statusCode: 400 });
     throw error;
   }
 
-  await sendFileToKindle(config.smtp, config.dataDir, body.filename, user.kindleEmail);
-  return { sent: true };
+  const libraryItem = store.getLibraryItemForUserByFilename(user.id, safeFilename);
+  if (!libraryItem) {
+    const error = new Error("Generated EPUB is not in your library yet.");
+    Object.assign(error, { statusCode: 404 });
+    throw error;
+  }
+
+  const delivery = await sendKindleDelivery(user, libraryItem, "manual");
+  return { sent: delivery.status === "sent", delivery };
+});
+
+app.get("/api/deliveries", async (request) => {
+  const user = requireUser(request);
+  return { deliveries: store.listKindleDeliveries(user.id) };
+});
+
+app.post("/api/deliveries/latest", async (request) => {
+  const user = requireUser(request);
+  getKindleDeliveryConfig(user);
+  const libraryItem = store.getLatestLibraryItem(user.id);
+  if (!libraryItem) {
+    const error = new Error("Generate an EPUB before sending the latest item.");
+    Object.assign(error, { statusCode: 404 });
+    throw error;
+  }
+
+  return { delivery: await sendKindleDelivery(user, libraryItem, "manual") };
+});
+
+app.post("/api/deliveries/test", async (request) => {
+  const user = requireUser(request);
+  getKindleDeliveryConfig(user);
+  const generated = await generateKindleFile(
+    {
+      title: "KindleFlow Delivery Test",
+      contentHtml:
+        "<p>If this EPUB appeared on your Kindle, KindleFlow SMTP delivery and Amazon's approved sender settings are working.</p>",
+      textContent:
+        "If this EPUB appeared on your Kindle, KindleFlow SMTP delivery and Amazon's approved sender settings are working."
+    },
+    {
+      dataDir: config.dataDir,
+      sourceUrl: config.appBaseUrl
+    }
+  );
+  const libraryItem = store.addLibraryItem(user.id, {
+    type: "article",
+    title: "KindleFlow Delivery Test",
+    sourceUrl: config.appBaseUrl,
+    filename: generated.filename,
+    mimeType: generated.mimeType
+  });
+
+  return { delivery: await sendKindleDelivery(user, libraryItem, "test") };
+});
+
+app.post("/api/deliveries/:deliveryId/retry", async (request) => {
+  const user = requireUser(request);
+  getKindleDeliveryConfig(user);
+  const { deliveryId } = request.params as { deliveryId: string };
+  const previousDelivery = store.getKindleDeliveryForUser(user.id, deliveryId);
+  if (!previousDelivery) {
+    const error = new Error("Delivery not found.");
+    Object.assign(error, { statusCode: 404 });
+    throw error;
+  }
+  if (previousDelivery.status !== "failed") {
+    const error = new Error("Only failed deliveries can be retried.");
+    Object.assign(error, { statusCode: 400 });
+    throw error;
+  }
+
+  return { delivery: await retryKindleDelivery(user, previousDelivery) };
 });
 
 app.get("/api/subscriptions", async (request) => {
@@ -396,6 +464,68 @@ function requireOpdsUser(token: string): UserProfile {
     throw error;
   }
   return user;
+}
+
+function getKindleDeliveryConfig(user: UserProfile): { smtp: SmtpConfig; kindleEmail: string } {
+  if (!config.smtp) {
+    const error = new Error("Kindle email delivery is not configured.");
+    Object.assign(error, { statusCode: 400 });
+    throw error;
+  }
+  if (!user.kindleEmail) {
+    const error = new Error("Add your Kindle email address before sending files.");
+    Object.assign(error, { statusCode: 400 });
+    throw error;
+  }
+  return { smtp: config.smtp, kindleEmail: user.kindleEmail };
+}
+
+async function sendKindleDelivery(
+  user: UserProfile,
+  libraryItem: LibraryItem,
+  trigger: "auto" | "manual" | "subscription" | "test"
+): Promise<KindleDelivery> {
+  const deliveryConfig = getKindleDeliveryConfig(user);
+  const delivery = store.createKindleDelivery(user.id, {
+    libraryItemId: libraryItem.id,
+    title: libraryItem.title,
+    filename: libraryItem.filename,
+    kindleEmail: deliveryConfig.kindleEmail,
+    trigger
+  });
+
+  return finishKindleDelivery(delivery, deliveryConfig.smtp);
+}
+
+async function retryKindleDelivery(user: UserProfile, previousDelivery: KindleDelivery): Promise<KindleDelivery> {
+  const deliveryConfig = getKindleDeliveryConfig(user);
+  const retry = store.createKindleDelivery(user.id, {
+    libraryItemId: previousDelivery.libraryItemId,
+    title: previousDelivery.title,
+    filename: previousDelivery.filename,
+    kindleEmail: deliveryConfig.kindleEmail,
+    trigger: "retry"
+  });
+
+  return finishKindleDelivery(retry, deliveryConfig.smtp);
+}
+
+async function finishKindleDelivery(delivery: KindleDelivery, smtp: SmtpConfig): Promise<KindleDelivery> {
+  try {
+    const result = await sendFileToKindle(smtp, config.dataDir, delivery.filename, delivery.kindleEmail);
+    return store.recordKindleDeliveryResult(delivery.id, {
+      status: "sent",
+      messageId: result.messageId,
+      response: result.response
+    });
+  } catch (error) {
+    const failed = store.recordKindleDeliveryResult(delivery.id, {
+      status: "failed",
+      error: error instanceof Error ? error.message : "Kindle delivery failed."
+    });
+    app.log.warn({ err: error, deliveryId: delivery.id }, "kindle delivery failed");
+    return failed;
+  }
 }
 
 function sendOpdsXml(reply: FastifyReply, xml: string) {

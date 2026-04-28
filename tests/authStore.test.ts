@@ -158,6 +158,62 @@ describe("AuthStore", () => {
       }
     ]);
     expect(store.getLibraryItemForOpdsToken(rotatedToken, "newsletter-issue.epub")?.title).toBe("Newsletter Issue");
+    expect(store.getLatestLibraryItem(user.id)?.title).toBe("Newsletter Issue");
+    expect(store.getLibraryItemForUserByFilename(user.id, "saved-article.epub")?.title).toBe("Saved Article");
+  });
+
+  it("records Kindle delivery attempts and retry results", () => {
+    const token = store.createLoginToken("reader@example.com", "secret", "secret");
+    const session = store.consumeMagicToken(token);
+    const user = store.getUserBySession(session)!;
+    const item = store.addLibraryItem(user.id, {
+      type: "article",
+      title: "Saved Article",
+      sourceUrl: "https://example.com/article",
+      filename: "saved-article.epub",
+      mimeType: "application/epub+zip"
+    });
+
+    const failed = store.createKindleDelivery(user.id, {
+      libraryItemId: item.id,
+      title: item.title,
+      filename: item.filename,
+      kindleEmail: "reader_123@kindle.com",
+      trigger: "manual"
+    });
+    expect(failed.status).toBe("pending");
+
+    const failedResult = store.recordKindleDeliveryResult(failed.id, {
+      status: "failed",
+      error: "SMTP rejected the message"
+    });
+    expect(failedResult).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      error: "SMTP rejected the message"
+    });
+
+    const retry = store.createKindleDelivery(user.id, {
+      libraryItemId: item.id,
+      title: item.title,
+      filename: item.filename,
+      kindleEmail: "reader_123@kindle.com",
+      trigger: "retry"
+    });
+    const sentResult = store.recordKindleDeliveryResult(retry.id, {
+      status: "sent",
+      messageId: "message-1",
+      response: "250 OK"
+    });
+
+    expect(sentResult).toMatchObject({
+      status: "sent",
+      attempts: 1,
+      messageId: "message-1",
+      response: "250 OK"
+    });
+    expect(store.listKindleDeliveries(user.id).map((delivery) => delivery.status)).toEqual(["sent", "failed"]);
+    expect(store.getKindleDeliveryForUser(user.id, failed.id)?.error).toBe("SMTP rejected the message");
   });
 
   it("removes expired library items when pruning delivered posts", () => {

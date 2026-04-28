@@ -33,6 +33,31 @@ export interface LibraryItemInput {
   mimeType: "application/epub+zip";
 }
 
+export interface KindleDelivery {
+  id: string;
+  userId: string;
+  libraryItemId?: string;
+  title: string;
+  filename: string;
+  kindleEmail: string;
+  trigger: "auto" | "manual" | "subscription" | "test" | "retry";
+  status: "pending" | "sent" | "failed";
+  attempts: number;
+  messageId?: string;
+  response?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KindleDeliveryInput {
+  libraryItemId?: string;
+  title: string;
+  filename: string;
+  kindleEmail: string;
+  trigger: KindleDelivery["trigger"];
+}
+
 export interface LibrarySubscription {
   id: string;
   title: string;
@@ -376,6 +401,20 @@ export class AuthStore {
     return this.getLibraryItem(id)!;
   }
 
+  getLatestLibraryItem(userId: string): LibraryItem | null {
+    const row = this.db
+      .prepare("SELECT * FROM library_items WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1")
+      .get(userId) as DbLibraryItem | undefined;
+    return row ? toLibraryItem(row) : null;
+  }
+
+  getLibraryItemForUserByFilename(userId: string, filename: string): LibraryItem | null {
+    const row = this.db
+      .prepare("SELECT * FROM library_items WHERE user_id = ? AND filename = ?")
+      .get(userId, filename) as DbLibraryItem | undefined;
+    return row ? toLibraryItem(row) : null;
+  }
+
   listRecentLibraryItems(userId: string, limit = 50): LibraryItem[] {
     return (
       this.db
@@ -419,6 +458,70 @@ export class AuthStore {
       .prepare("SELECT * FROM library_items WHERE user_id = ? AND filename = ?")
       .get(user.id, filename) as DbLibraryItem | undefined;
     return row ? toLibraryItem(row) : null;
+  }
+
+  createKindleDelivery(userId: string, input: KindleDeliveryInput): KindleDelivery {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `INSERT INTO kindle_deliveries
+           (id, user_id, library_item_id, title, filename, kindle_email, trigger, status, attempts, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, datetime('now'), datetime('now'))`
+      )
+      .run(
+        id,
+        userId,
+        input.libraryItemId ?? null,
+        input.title,
+        input.filename,
+        normalizeEmail(input.kindleEmail),
+        input.trigger
+      );
+    return this.getKindleDeliveryForUser(userId, id)!;
+  }
+
+  recordKindleDeliveryResult(
+    deliveryId: string,
+    result: { status: "sent"; messageId?: string; response?: string } | { status: "failed"; error: string }
+  ): KindleDelivery {
+    if (result.status === "sent") {
+      this.db
+        .prepare(
+          `UPDATE kindle_deliveries
+           SET status = 'sent', attempts = attempts + 1, message_id = ?, response = ?, error = NULL, updated_at = datetime('now')
+           WHERE id = ?`
+        )
+        .run(result.messageId ?? null, result.response ?? null, deliveryId);
+    } else {
+      this.db
+        .prepare(
+          `UPDATE kindle_deliveries
+           SET status = 'failed', attempts = attempts + 1, error = ?, updated_at = datetime('now')
+           WHERE id = ?`
+        )
+        .run(result.error, deliveryId);
+    }
+
+    const delivery = this.getKindleDelivery(deliveryId);
+    if (!delivery) {
+      throw new Error("Delivery not found.");
+    }
+    return delivery;
+  }
+
+  listKindleDeliveries(userId: string, limit = 25): KindleDelivery[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM kindle_deliveries WHERE user_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT ?")
+        .all(userId, limit) as unknown as DbKindleDelivery[]
+    ).map(toKindleDelivery);
+  }
+
+  getKindleDeliveryForUser(userId: string, deliveryId: string): KindleDelivery | null {
+    const row = this.db
+      .prepare("SELECT * FROM kindle_deliveries WHERE user_id = ? AND id = ?")
+      .get(userId, deliveryId) as DbKindleDelivery | undefined;
+    return row ? toKindleDelivery(row) : null;
   }
 
   pruneDeliveredPostsForUser(userId: string): string[] {
@@ -542,10 +645,28 @@ export class AuthStore {
         created_at TEXT NOT NULL,
         UNIQUE(user_id, filename)
       );
+
+      CREATE TABLE IF NOT EXISTS kindle_deliveries (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        library_item_id TEXT REFERENCES library_items(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        kindle_email TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        message_id TEXT,
+        response TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
     this.addColumnIfMissing("users", "subscription_retention_days", "INTEGER NOT NULL DEFAULT 30");
     this.addColumnIfMissing("users", "opds_token", "TEXT");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_opds_token ON users(opds_token)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_kindle_deliveries_user_updated ON kindle_deliveries(user_id, updated_at)");
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
@@ -553,6 +674,13 @@ export class AuthStore {
     if (!columns.some((existing) => existing.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
+  }
+
+  private getKindleDelivery(deliveryId: string): KindleDelivery | null {
+    const row = this.db.prepare("SELECT * FROM kindle_deliveries WHERE id = ?").get(deliveryId) as
+      | DbKindleDelivery
+      | undefined;
+    return row ? toKindleDelivery(row) : null;
   }
 }
 
@@ -576,6 +704,23 @@ interface DbLibraryItem {
   filename: string;
   mime_type: "application/epub+zip";
   created_at: string;
+}
+
+interface DbKindleDelivery {
+  id: string;
+  user_id: string;
+  library_item_id?: string;
+  title: string;
+  filename: string;
+  kindle_email: string;
+  trigger: KindleDelivery["trigger"];
+  status: KindleDelivery["status"];
+  attempts: number;
+  message_id?: string;
+  response?: string;
+  error?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 function randomToken(): string {
@@ -649,5 +794,24 @@ function toLibraryItem(row: DbLibraryItem): LibraryItem {
     filename: row.filename,
     mimeType: row.mime_type,
     createdAt: row.created_at
+  };
+}
+
+function toKindleDelivery(row: DbKindleDelivery): KindleDelivery {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    libraryItemId: row.library_item_id || undefined,
+    title: row.title,
+    filename: row.filename,
+    kindleEmail: row.kindle_email,
+    trigger: row.trigger,
+    status: row.status,
+    attempts: row.attempts,
+    messageId: row.message_id || undefined,
+    response: row.response || undefined,
+    error: row.error || undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }

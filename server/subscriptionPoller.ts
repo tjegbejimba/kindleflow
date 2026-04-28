@@ -76,8 +76,7 @@ async function pollSubscription(
       sourceUrl: fetched.sourceUrl
     });
 
-    await sendFileToKindle(config.smtp, config.dataDir, generated.filename, subscription.kindleEmail);
-    store.addLibraryItem(subscription.userId, {
+    const libraryItem = store.addLibraryItem(subscription.userId, {
       type: "subscription_post",
       subscriptionId: subscription.id,
       title: fetched.article.title,
@@ -85,6 +84,28 @@ async function pollSubscription(
       filename: generated.filename,
       mimeType: generated.mimeType
     });
+    const delivery = store.createKindleDelivery(subscription.userId, {
+      libraryItemId: libraryItem.id,
+      title: libraryItem.title,
+      filename: libraryItem.filename,
+      kindleEmail: subscription.kindleEmail,
+      trigger: "subscription"
+    });
+
+    try {
+      const result = await sendFileToKindle(config.smtp, config.dataDir, generated.filename, subscription.kindleEmail);
+      store.recordKindleDeliveryResult(delivery.id, {
+        status: "sent",
+        messageId: result.messageId,
+        response: result.response
+      });
+    } catch (error) {
+      store.recordKindleDeliveryResult(delivery.id, {
+        status: "failed",
+        error: error instanceof Error ? error.message : "Kindle delivery failed."
+      });
+      throw error;
+    }
     store.markPostDelivered(subscription.id, {
       url: post.url,
       guid: post.guid,
