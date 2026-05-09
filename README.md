@@ -93,9 +93,26 @@ For most users, paid Substack posts should be saved with the browser extension b
 
 ## Browser extension for paid Substack
 
-The `extension/` directory contains an unpacked WebExtension MVP for saving pages that are already readable in your browser, including Substack premium posts. It does not read or upload Substack cookies; it captures the rendered page HTML, sends it to KindleFlow, generates the EPUB, and auto-sends it to Kindle when your KindleFlow profile has auto-send enabled.
+The `extension/` directory contains the WebExtension source for saving pages that are already readable in your browser, including Substack premium posts. It does not read or upload Substack cookies; it captures the rendered page HTML, sends it to KindleFlow, generates the EPUB, and auto-sends it to Kindle when your KindleFlow profile has auto-send enabled.
 
-To load it in Chrome/Chromium:
+To package store-ready builds:
+
+```bash
+npm run package:extension
+```
+
+This creates:
+
+- `dist/extensions/kindleflow-chrome.zip` for Chrome Web Store
+- `dist/extensions/kindleflow-firefox.zip` for Firefox Add-ons
+
+Store listing notes:
+
+- Summary: `Send paid Substack and other readable articles from your browser to KindleFlow.`
+- Permission rationale: `activeTab` and `scripting` capture only the current page after the user clicks the extension; `storage` saves the KindleFlow app URL; host permissions let the popup call the configured KindleFlow server.
+- Privacy note: the extension sends the rendered page HTML to the user's configured KindleFlow server. It does not collect analytics and does not read, store, or transmit Substack cookies.
+
+To load it locally in Chrome/Chromium:
 
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
@@ -103,7 +120,7 @@ To load it in Chrome/Chromium:
 4. Sign in to KindleFlow in the same browser.
 5. Open a readable Substack post, click the KindleFlow extension, confirm the KindleFlow URL, and choose “Send current page”.
 
-For Firefox, load the same `extension/manifest.json` temporarily from `about:debugging#/runtime/this-firefox`.
+For local Firefox testing, load the same `extension/manifest.json` temporarily from `about:debugging#/runtime/this-firefox`.
 
 The default extension URL is `https://kindleflow.tail217062.ts.net`. If you use a different KindleFlow URL, enter it in the popup. The extension will ask for permission to that app origin so it can call KindleFlow’s import/generate/send APIs. After generation, the popup shows download and manual “Send to Kindle” actions when needed.
 

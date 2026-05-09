@@ -9,6 +9,7 @@
     "dev:client": "vite --host 0.0.0.0",
     "test": "vitest run",
     "build": "tsc --noEmit && vite build",
+    "package:extension": "node scripts/package-extension.mjs",
     "start": "tsx server/index.ts"
   },
   "keywords": [],
