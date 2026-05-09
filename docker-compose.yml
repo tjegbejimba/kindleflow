@@ -22,9 +22,11 @@ services:
       - sys_module
 
   kindleflow:
-    build: .
+    image: ghcr.io/tjegbejimba/kindleflow:latest
     container_name: kindleflow
     restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     ports:
       - "${PORT:-3000}:3000"
     environment:
@@ -43,5 +45,7 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      SUBSTACK_COOKIE: ${SUBSTACK_COOKIE:-}
+      SUBSTACK_COOKIE_HOSTS: ${SUBSTACK_COOKIE_HOSTS:-}
     volumes:
       - ./data:/app/data

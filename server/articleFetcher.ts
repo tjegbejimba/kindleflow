@@ -1,4 +1,5 @@
 import { extractArticleFromHtml, type ExtractedArticle } from "./articleExtraction.js";
+import { cookieHeaderForUrl, type SubstackAuthConfig } from "./substackAuth.js";
 import { validateFetchUrl } from "./urlValidation.js";
 
 export interface FetchArticleResult {
@@ -6,20 +7,26 @@ export interface FetchArticleResult {
   article: ExtractedArticle;
 }
 
+export interface FetchArticleOptions {
+  substackAuth?: SubstackAuthConfig;
+}
+
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 
-export async function fetchAndExtractArticle(rawUrl: string): Promise<FetchArticleResult> {
+export async function fetchAndExtractArticle(rawUrl: string, options: FetchArticleOptions = {}): Promise<FetchArticleResult> {
   let currentUrl = await validateFetchUrl(rawUrl);
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    const cookie = cookieHeaderForUrl(currentUrl, options.substackAuth);
     const response = await fetch(currentUrl, {
       redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: {
         "user-agent": "KindleFlow/1.0 (+self-hosted article reader)",
-        accept: "text/html,application/xhtml+xml"
+        accept: "text/html,application/xhtml+xml",
+        ...(cookie ? { cookie } : {})
       }
     });
 

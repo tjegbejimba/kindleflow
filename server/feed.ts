@@ -1,4 +1,5 @@
 import { JSDOM } from "jsdom";
+import { cookieHeaderForUrl, type SubstackAuthConfig } from "./substackAuth.js";
 import { validateFetchUrl } from "./urlValidation.js";
 
 export interface FeedItem {
@@ -13,6 +14,10 @@ export interface ParsedFeed {
   items: FeedItem[];
 }
 
+export interface FetchFeedOptions {
+  substackAuth?: SubstackAuthConfig;
+}
+
 export function normalizeFeedUrl(rawUrl: string): string {
   const url = new URL(rawUrl);
   url.hash = "";
@@ -24,13 +29,15 @@ export function normalizeFeedUrl(rawUrl: string): string {
   return url.toString();
 }
 
-export async function fetchFeed(rawUrl: string): Promise<ParsedFeed & { feedUrl: string }> {
+export async function fetchFeed(rawUrl: string, options: FetchFeedOptions = {}): Promise<ParsedFeed & { feedUrl: string }> {
   const feedUrl = normalizeFeedUrl(rawUrl);
   const validatedUrl = await validateFetchUrl(feedUrl);
+  const cookie = cookieHeaderForUrl(validatedUrl, options.substackAuth);
   const response = await fetch(validatedUrl, {
     headers: {
       "user-agent": "KindleFlow/1.0 (+self-hosted newsletter reader)",
-      accept: "application/rss+xml, application/atom+xml, application/xml, text/xml"
+      accept: "application/rss+xml, application/atom+xml, application/xml, text/xml",
+      ...(cookie ? { cookie } : {})
     },
     signal: AbortSignal.timeout(15_000)
   });

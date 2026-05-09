@@ -33,6 +33,11 @@ interface FetchResult {
   article: ExtractedArticle;
 }
 
+interface ExtensionImportPayload {
+  sourceUrl: string;
+  html: string;
+}
+
 interface GeneratedFile {
   filename: string;
   downloadUrl: string;
@@ -65,11 +70,14 @@ interface KindleDelivery {
 
 function App() {
   const [config, setConfig] = React.useState<AppConfig | null>(null);
+  const [authLoaded, setAuthLoaded] = React.useState(false);
   const [user, setUser] = React.useState<UserProfile | null>(null);
   const [subscriptions, setSubscriptions] = React.useState<Subscription[]>([]);
   const [deliveries, setDeliveries] = React.useState<KindleDelivery[]>([]);
   const [opdsUrl, setOpdsUrl] = React.useState("");
   const [loginEmail, setLoginEmail] = React.useState("");
+  const [loginCode, setLoginCode] = React.useState("");
+  const [loginCodeSent, setLoginCodeSent] = React.useState(false);
   const [inviteCode, setInviteCode] = React.useState("");
   const [kindleEmail, setKindleEmail] = React.useState("");
   const [autoSendToKindle, setAutoSendToKindle] = React.useState(true);
@@ -78,6 +86,7 @@ function App() {
   const [subscriptionUrl, setSubscriptionUrl] = React.useState("");
   const [result, setResult] = React.useState<FetchResult | null>(null);
   const [generatedFile, setGeneratedFile] = React.useState<GeneratedFile | null>(null);
+  const [pendingExtensionImport, setPendingExtensionImport] = React.useState<ExtensionImportPayload | null>(null);
   const [status, setStatus] = React.useState("");
   const [error, setError] = React.useState("");
   const [busyAction, setBusyAction] = React.useState<
@@ -85,6 +94,7 @@ function App() {
     | "profile"
     | "opds"
     | "fetch"
+    | "import"
     | "generate"
     | "send"
     | "testDelivery"
@@ -101,18 +111,53 @@ function App() {
       .then(([appConfig, me]) => {
         setConfig(appConfig);
         applyUser(me.user);
+        setAuthLoaded(true);
         if (me.user) {
           void loadSubscriptions();
           void loadOpdsUrl();
           void loadDeliveries();
         }
-        if (new URLSearchParams(window.location.search).get("verified") === "1") {
-          setStatus("You are signed in.");
-          window.history.replaceState({}, "", "/");
-        }
       })
-      .catch((err) => setError(errorMessage(err)));
+      .catch((err) => {
+        setAuthLoaded(true);
+        setError(errorMessage(err));
+      });
   }, []);
+
+  React.useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.source !== window) {
+        return;
+      }
+
+      const payload = parseExtensionImportMessage(event.data);
+      if (!payload) {
+        return;
+      }
+
+      setPendingExtensionImport(payload);
+      setStatus("Article received from the KindleFlow extension...");
+      setError("");
+    }
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
+  React.useEffect(() => {
+    if (!pendingExtensionImport || !authLoaded) {
+      return;
+    }
+
+    if (!user) {
+      setPendingExtensionImport(null);
+      setStatus("");
+      setError("Sign in to KindleFlow, then click the extension button again to import this article.");
+      return;
+    }
+
+    void importExtensionArticle(pendingExtensionImport);
+  }, [authLoaded, pendingExtensionImport, user]);
 
   function applyUser(nextUser: UserProfile | null) {
     setUser(nextUser);
@@ -121,15 +166,39 @@ function App() {
     setSubscriptionRetentionDays(nextUser?.subscriptionRetentionDays ?? 30);
   }
 
-  async function requestLoginLink(event: React.FormEvent) {
+  async function requestLoginCode(event: React.FormEvent) {
     event.preventDefault();
     setBusyAction("login");
     setError("");
-    setStatus("Sending login link...");
+    setStatus("Sending login code...");
 
     try {
-      await apiPost("/api/auth/request-link", { email: loginEmail, inviteCode });
-      setStatus("Check your email for a KindleFlow login link.");
+      await apiPost("/api/auth/request-code", { email: loginEmail, inviteCode });
+      setLoginCodeSent(true);
+      setStatus("Check your email for a 6-digit KindleFlow login code, then enter it here.");
+    } catch (err) {
+      setStatus("");
+      setError(errorMessage(err));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function verifyLoginCode(event: React.FormEvent) {
+    event.preventDefault();
+    setBusyAction("login");
+    setError("");
+    setStatus("Verifying login code...");
+
+    try {
+      const response = await apiPost<{ user: UserProfile }>("/api/auth/verify-code", { email: loginEmail, code: loginCode });
+      applyUser(response.user);
+      setLoginCode("");
+      setLoginCodeSent(false);
+      await loadSubscriptions();
+      await loadOpdsUrl();
+      await loadDeliveries();
+      setStatus("You are signed in.");
     } catch (err) {
       setStatus("");
       setError(errorMessage(err));
@@ -190,6 +259,27 @@ function App() {
       const response = await apiPost<FetchResult>("/api/articles/fetch", { url });
       setResult(response);
       setStatus("Article extracted. Review the preview, then generate your Kindle file.");
+    } catch (err) {
+      setResult(null);
+      setStatus("");
+      setError(errorMessage(err));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function importExtensionArticle(payload: ExtensionImportPayload) {
+    setPendingExtensionImport(null);
+    setBusyAction("import");
+    setError("");
+    setStatus("Importing article from browser extension...");
+    setGeneratedFile(null);
+
+    try {
+      const response = await apiPost<FetchResult>("/api/articles/import", payload);
+      setResult(response);
+      setUrl(response.sourceUrl);
+      setStatus("Article imported. Review the preview, then generate your Kindle file.");
     } catch (err) {
       setResult(null);
       setStatus("");
@@ -379,22 +469,23 @@ function App() {
         <section className="card">
           <h2>Sign in</h2>
           <p className="muted">
-            KindleFlow uses email magic links. New users need the invite code, and email sending must be configured on the
-            server.
+            KindleFlow emails a one-time code so you can finish signing in from this browser. New users need the invite
+            code, and email sending must be configured on the server.
           </p>
           {config && !config.emailDeliveryEnabled ? (
             <p className="error">Email delivery is not configured yet. Add Gmail SMTP settings before logging in.</p>
           ) : null}
-          <form onSubmit={requestLoginLink}>
+          <form onSubmit={loginCodeSent ? verifyLoginCode : requestLoginCode}>
             <label htmlFor="login-email">Email</label>
             <input
               id="login-email"
               type="email"
               value={loginEmail}
               onChange={(event) => setLoginEmail(event.target.value)}
+              disabled={loginCodeSent}
               required
             />
-            {config?.inviteRequired ? (
+            {config?.inviteRequired && !loginCodeSent ? (
               <>
                 <label htmlFor="invite-code">Invite code</label>
                 <input
@@ -405,8 +496,41 @@ function App() {
                 />
               </>
             ) : null}
+            {loginCodeSent ? (
+              <>
+                <label htmlFor="login-code">Login code</label>
+                <input
+                  id="login-code"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  autoComplete="one-time-code"
+                  placeholder="123456"
+                  value={loginCode}
+                  onChange={(event) => setLoginCode(event.target.value)}
+                  required
+                />
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    setLoginCodeSent(false);
+                    setLoginCode("");
+                    setStatus("");
+                  }}
+                  disabled={isBusy}
+                >
+                  Use a different email
+                </button>
+              </>
+            ) : null}
             <button type="submit" disabled={isBusy || !config?.emailDeliveryEnabled}>
-              {busyAction === "login" ? "Sending..." : "Email me a login link"}
+              {busyAction === "login"
+                ? loginCodeSent
+                  ? "Verifying..."
+                  : "Sending..."
+                : loginCodeSent
+                  ? "Verify code"
+                  : "Email me a login code"}
             </button>
           </form>
         </section>
@@ -696,6 +820,27 @@ async function readApiResponse<T>(response: Response): Promise<T> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function parseExtensionImportMessage(value: unknown): ExtensionImportPayload | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const message = value as { source?: unknown; kind?: unknown; payload?: unknown };
+  if (message.source !== "kindleflow-extension" || message.kind !== "article-html") {
+    return null;
+  }
+
+  const payload = message.payload as { sourceUrl?: unknown; html?: unknown } | undefined;
+  if (!payload || typeof payload.sourceUrl !== "string" || typeof payload.html !== "string") {
+    return null;
+  }
+
+  return {
+    sourceUrl: payload.sourceUrl,
+    html: payload.html
+  };
 }
 
 function deliveryStatusMessage(delivery: KindleDelivery | undefined, fallback: string): string {

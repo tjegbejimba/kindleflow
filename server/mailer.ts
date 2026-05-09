@@ -3,14 +3,14 @@ import path from "node:path";
 import nodemailer from "nodemailer";
 import type { SmtpConfig } from "./config.js";
 
-export async function sendMagicLink(config: SmtpConfig, email: string, magicLink: string): Promise<void> {
+export async function sendLoginCode(config: SmtpConfig, email: string, code: string): Promise<void> {
   const transporter = createTransporter(config);
   await transporter.sendMail({
     from: config.from,
     to: email,
-    subject: "Your KindleFlow login link",
-    text: `Open this link to sign in to KindleFlow:\n\n${magicLink}\n\nThis link expires in 15 minutes.`,
-    html: `<p>Open this link to sign in to KindleFlow:</p><p><a href="${escapeHtml(magicLink)}">Sign in to KindleFlow</a></p><p>This link expires in 15 minutes.</p>`
+    subject: "Your KindleFlow login code",
+    text: `Enter this code to sign in to KindleFlow:\n\n${code}\n\nThis code expires in 15 minutes.`,
+    html: `<p>Enter this code to sign in to KindleFlow:</p><p><strong style="font-size: 1.6em; letter-spacing: 0.12em;">${escapeHtml(code)}</strong></p><p>This code expires in 15 minutes.</p>`
   });
 }
 

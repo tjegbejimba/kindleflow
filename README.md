@@ -10,10 +10,11 @@ Self-hosted article-to-Kindle app for personal use. Paste an article URL, extrac
 - Sanitized article preview and EPUB content
 - EPUB generation into a persistent data directory
 - Generated local PNG covers embedded in each EPUB for nicer Kindle library thumbnails
-- Invite-only email magic-link login
+- Invite-only email one-time-code login
 - Per-user Kindle email settings and automatic EPUB delivery
 - Kindle delivery history with SMTP response logging, test sends, latest-EPUB sends, and failed-send retry
 - Public Substack/RSS subscriptions with daily polling and dedupe
+- Browser extension MVP for sending rendered Substack premium posts without copying cookies
 - Private OPDS catalogs for KOReader or other OPDS-capable readers
 - PWA manifest/icon for installing from the browser
 - Docker Compose deployment for a Synology NAS
@@ -36,6 +37,13 @@ npm run dev:client
 ```
 
 Open `http://localhost:5173`. Vite proxies `/api` and `/files` to the Fastify backend on port `3000`.
+
+If another local app already uses port `3000`, run the backend and proxy on a different port:
+
+```bash
+PORT=3001 npm run dev:server
+KINDLEFLOW_SERVER_PORT=3001 npm run dev:client
+```
 
 Build and run production mode locally:
 
@@ -61,11 +69,13 @@ Environment variables:
 | Variable | Required | Description |
 | --- | --- | --- |
 | `PORT` | No | Host port for Docker Compose; defaults to `3000`. |
-| `APP_BASE_URL` | Yes for email login | Public/local URL used in magic login links, for example `http://100.104.13.117:3060`. |
+| `APP_BASE_URL` | Yes for email login | Public/local URL used in OPDS URLs and app links, for example `http://100.104.13.117:3060`. |
 | `INVITE_CODES_FILE` | No | One-time invite-code file path; defaults to `DATA_DIR/invite-codes.txt`. |
 | `INVITE_CODE` | No | Legacy shared invite code fallback when `INVITE_CODES_FILE` does not exist. |
 | `COOKIE_SECURE` | No | Set `true` only when serving over HTTPS. |
 | `SESSION_TTL_DAYS` | No | Browser login session lifetime; defaults to `180` and refreshes on visits. |
+| `SUBSTACK_COOKIE` | No | Substack `Cookie` header value, without the `Cookie:` prefix, used when fetching paid Substack posts. |
+| `SUBSTACK_COOKIE_HOSTS` | No | Comma-separated custom Substack hostnames that may receive `SUBSTACK_COOKIE`; `substack.com` and `*.substack.com` are included automatically. |
 | `DATA_DIR` | No | Directory for generated EPUB files; defaults to `data`. |
 | `DB_PATH` | No | SQLite database path; defaults to `DATA_DIR/kindleflow.sqlite`. |
 | `SMTP_HOST` | For email | SMTP server hostname. |
@@ -75,9 +85,26 @@ Environment variables:
 | `SMTP_PASS` | No | SMTP password or app password. |
 | `SMTP_FROM` | For email | Approved sender address for Kindle delivery. |
 
-If `SMTP_HOST` or `SMTP_FROM` are missing, users cannot receive magic login links or Kindle delivery emails. Do not commit real SMTP credentials.
+If `SMTP_HOST` or `SMTP_FROM` are missing, users cannot receive login codes or Kindle delivery emails. Do not commit real SMTP credentials.
 
 Login sessions are stored in an HTTP-only browser cookie. Use one consistent app URL for both `APP_BASE_URL` and browsing the site because cookies are scoped to the exact host; for example, a login cookie from `http://100.104.13.117:3060` will not apply when visiting the Tailscale hostname.
+
+For paid Substack posts, set `SUBSTACK_COOKIE` to the browser cookie value from a logged-in Substack session, without the `Cookie:` prefix. KindleFlow sends it only to `substack.com`, `*.substack.com`, and hosts listed in `SUBSTACK_COOKIE_HOSTS` to avoid leaking it to unrelated article sites.
+
+## Browser extension
+
+The `extension/` directory contains an unpacked WebExtension MVP for saving pages that are already readable in your browser, including Substack premium posts. It does not read or upload Substack cookies; it captures the rendered page HTML, opens KindleFlow, and lets the first-party KindleFlow page import the article with your existing KindleFlow login session.
+
+To load it in Chrome/Chromium:
+
+1. Open `chrome://extensions`.
+2. Enable Developer mode.
+3. Choose “Load unpacked” and select this repo’s `extension/` directory.
+4. Open a readable Substack post, click the KindleFlow extension, confirm the KindleFlow URL, and choose “Send current page”.
+
+For Firefox, load the same `extension/manifest.json` temporarily from `about:debugging#/runtime/this-firefox`.
+
+The default extension URL is `https://kindleflow.tail217062.ts.net`. If you use a different KindleFlow URL, enter it in the popup. The extension will ask for permission to that app origin so it can hand the captured article to the opened KindleFlow tab.
 
 ### Gmail SMTP
 
@@ -105,11 +132,14 @@ mkdir -p /volume2/docker/projects/kindleflow
 cd /volume2/docker/projects/kindleflow
 ```
 
-Copy the project files there, create an optional `.env`, then start it:
+Copy `docker-compose.yml`, `tailscale/config/serve.json`, and create an `.env`, then start it:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
+
+The `kindleflow` service uses `ghcr.io/tjegbejimba/kindleflow:latest` and has the Watchtower enable label. Pushes to `main` publish a new GHCR image, and Watchtower can pull/restart the container on its normal schedule or via the Watchtower HTTP API.
 
 Example NAS `.env` for Tailscale access on port `3060`:
 
@@ -168,7 +198,7 @@ APP_BASE_URL=https://kindleflow.tail217062.ts.net
 COOKIE_SECURE=true
 ```
 
-The Compose stack starts `tailscale-kindleflow` and loads `tailscale/config/serve.json` so Tailscale HTTPS proxies to the app container on port `3000`. The legacy host-port path still works through `PORT=3060`, but magic links and OPDS URLs should use `APP_BASE_URL`.
+The Compose stack starts `tailscale-kindleflow` and loads `tailscale/config/serve.json` so Tailscale HTTPS proxies to the app container on port `3000`. The legacy host-port path still works through `PORT=3060`, but OPDS URLs should use `APP_BASE_URL`.
 
 The SQLite database is stored at:
 

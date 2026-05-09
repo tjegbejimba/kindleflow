@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -87,7 +87,7 @@ export interface SubscriptionWithUser extends SubscriptionRecord {
   subscriptionRetentionDays: number;
 }
 
-const MAGIC_TOKEN_TTL_MS = 15 * 60 * 1000;
+const LOGIN_CODE_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
 export class AuthStore {
@@ -107,7 +107,7 @@ export class AuthStore {
     this.db.close();
   }
 
-  createLoginToken(emailInput: string, inviteCode: string | undefined, expectedInviteCode: string | undefined): string {
+  createLoginCode(emailInput: string, inviteCode: string | undefined, expectedInviteCode: string | undefined): string {
     const email = normalizeEmail(emailInput);
     let user = this.findUserByEmail(email);
 
@@ -125,31 +125,40 @@ export class AuthStore {
       user = { id };
     }
 
-    const token = randomToken();
+    this.db.prepare("UPDATE login_codes SET used_at = datetime('now') WHERE user_id = ? AND used_at IS NULL").run(user.id);
+
+    const code = randomLoginCode();
     this.db
       .prepare(
-        "INSERT INTO magic_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, datetime('now'))"
+        "INSERT INTO login_codes (id, user_id, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, datetime('now'))"
       )
-      .run(randomUUID(), user.id, hashToken(token), Date.now() + MAGIC_TOKEN_TTL_MS);
+      .run(randomUUID(), user.id, hashLoginCode(user.id, code), Date.now() + LOGIN_CODE_TTL_MS);
 
-    return token;
+    return code;
   }
 
-  consumeMagicToken(token: string): string {
+  consumeLoginCode(emailInput: string, codeInput: string): string {
+    const email = normalizeEmail(emailInput);
+    const code = normalizeLoginCode(codeInput);
+    const user = this.findUserByEmail(email);
+    if (!user) {
+      throw new Error("This login code is invalid or expired.");
+    }
+
     const now = Date.now();
     const row = this.db
       .prepare(
         `SELECT id, user_id AS userId
-         FROM magic_tokens
-         WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`
+         FROM login_codes
+         WHERE user_id = ? AND code_hash = ? AND used_at IS NULL AND expires_at > ?`
       )
-      .get(hashToken(token), now) as { id: string; userId: string } | undefined;
+      .get(user.id, hashLoginCode(user.id, code), now) as { id: string; userId: string } | undefined;
 
     if (!row) {
-      throw new Error("This login link is invalid or expired.");
+      throw new Error("This login code is invalid or expired.");
     }
 
-    this.db.prepare("UPDATE magic_tokens SET used_at = datetime('now') WHERE id = ?").run(row.id);
+    this.db.prepare("UPDATE login_codes SET used_at = datetime('now') WHERE id = ?").run(row.id);
     this.db.prepare("UPDATE users SET verified_at = COALESCE(verified_at, datetime('now')) WHERE id = ?").run(row.userId);
 
     const sessionToken = randomToken();
@@ -602,6 +611,15 @@ export class AuthStore {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS login_codes (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -727,14 +745,30 @@ function randomToken(): string {
   return randomBytes(36).toString("base64url");
 }
 
+function randomLoginCode(): string {
+  return randomInt(0, 1_000_000).toString().padStart(6, "0");
+}
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function hashLoginCode(userId: string, code: string): string {
+  return createHash("sha256").update(`${userId}:${code}`).digest("hex");
 }
 
 function normalizeEmail(email: string): string {
   const normalized = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
     throw new Error("Please enter a valid email address.");
+  }
+  return normalized;
+}
+
+function normalizeLoginCode(code: string): string {
+  const normalized = code.trim().replace(/\s+/g, "");
+  if (!/^\d{6}$/.test(normalized)) {
+    throw new Error("Enter the 6-digit login code from your email.");
   }
   return normalized;
 }

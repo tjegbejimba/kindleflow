@@ -6,12 +6,13 @@ import { access, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AuthStore, type KindleDelivery, type LibraryItem, type UserProfile } from "./authStore.js";
+import { importRenderedArticle } from "./articleImport.js";
 import { fetchAndExtractArticle } from "./articleFetcher.js";
 import { isEmailDeliveryEnabled, loadConfig, type SmtpConfig } from "./config.js";
 import { fetchFeed } from "./feed.js";
 import { FileInviteCodes } from "./inviteCodes.js";
 import { generateKindleFile } from "./kindleFile.js";
-import { sendFileToKindle, sendMagicLink } from "./mailer.js";
+import { sendFileToKindle, sendLoginCode } from "./mailer.js";
 import { renderOpdsAcquisitionFeed, renderOpdsNavigationFeed } from "./opds.js";
 import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionPoller.js";
 
@@ -22,6 +23,7 @@ const inviteCodes = new FileInviteCodes(config.inviteCodesFile);
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const clientDist = path.join(projectRoot, "client", "dist");
 const SESSION_COOKIE = "kf_session";
+const MAX_IMPORTED_HTML_BYTES = 5 * 1024 * 1024;
 
 await mkdir(config.dataDir, { recursive: true });
 
@@ -57,7 +59,7 @@ app.get("/api/config", async () => ({
   kindleSettingsUrl: "https://www.amazon.com/hz/mycd/myx#/home/settings/payment"
 }));
 
-app.post("/api/auth/request-link", async (request) => {
+app.post("/api/auth/request-code", async (request) => {
   const body = request.body as { email?: unknown; inviteCode?: unknown };
   if (typeof body.email !== "string") {
     throw new Error("Email is required.");
@@ -77,22 +79,20 @@ app.post("/api/auth/request-link", async (request) => {
     );
   }
 
-  const token = store.createLoginToken(body.email, "__already_invited__", undefined);
-  const magicLink = `${config.appBaseUrl}/api/auth/verify?token=${encodeURIComponent(token)}`;
-
-  await sendMagicLink(config.smtp, body.email, magicLink);
+  const code = store.createLoginCode(body.email, "__already_invited__", undefined);
+  await sendLoginCode(config.smtp, body.email, code);
   return { sent: true };
 });
 
-app.get("/api/auth/verify", async (request, reply) => {
-  const query = request.query as { token?: unknown };
-  if (typeof query.token !== "string") {
-    throw new Error("Login token is required.");
+app.post("/api/auth/verify-code", async (request, reply) => {
+  const body = request.body as { email?: unknown; code?: unknown };
+  if (typeof body.email !== "string" || typeof body.code !== "string") {
+    throw new Error("Email and login code are required.");
   }
 
-  const sessionToken = store.consumeMagicToken(query.token);
+  const sessionToken = store.consumeLoginCode(body.email, body.code);
   reply.setCookie(SESSION_COOKIE, sessionToken, sessionCookieOptions(config.cookieSecure, config.sessionTtlDays));
-  return reply.redirect("/?verified=1");
+  return { user: store.getUserBySession(sessionToken) };
 });
 
 app.post("/api/auth/logout", async (request, reply) => {
@@ -149,7 +149,20 @@ app.post("/api/articles/fetch", async (request) => {
     throw new Error("URL is required.");
   }
 
-  return fetchAndExtractArticle(body.url);
+  return fetchAndExtractArticle(body.url, { substackAuth: config.substackAuth });
+});
+
+app.post("/api/articles/import", { bodyLimit: MAX_IMPORTED_HTML_BYTES }, async (request) => {
+  requireUser(request);
+  const body = request.body as { sourceUrl?: unknown; html?: unknown };
+  if (typeof body.sourceUrl !== "string" || typeof body.html !== "string") {
+    throw new Error("Source URL and rendered HTML are required.");
+  }
+
+  return importRenderedArticle({
+    sourceUrl: body.sourceUrl,
+    html: body.html
+  });
 });
 
 app.post("/api/articles/generate", async (request) => {
@@ -300,7 +313,7 @@ app.post("/api/subscriptions", async (request) => {
     throw new Error("Subscription URL is required.");
   }
 
-  const feed = await fetchFeed(body.url);
+  const feed = await fetchFeed(body.url, { substackAuth: config.substackAuth });
   const subscription = store.addSubscription(user.id, {
     feedUrl: feed.feedUrl,
     sourceUrl: body.url,

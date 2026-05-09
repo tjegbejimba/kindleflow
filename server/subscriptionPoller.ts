@@ -53,7 +53,7 @@ async function pollSubscription(
   subscription: SubscriptionWithUser,
   logger: Pick<FastifyBaseLogger, "info" | "warn" | "error">
 ): Promise<number> {
-  const feed = await fetchFeed(subscription.feedUrl);
+  const feed = await fetchFeed(subscription.feedUrl, { substackAuth: config.substackAuth });
   let delivered = 0;
 
   for (const post of [...feed.items].reverse()) {
@@ -70,7 +70,7 @@ async function pollSubscription(
       continue;
     }
 
-    const fetched = await fetchAndExtractArticle(post.url);
+    const fetched = await fetchAndExtractArticle(post.url, { substackAuth: config.substackAuth });
     const generated = await generateKindleFile(fetched.article, {
       dataDir: config.dataDir,
       sourceUrl: fetched.sourceUrl

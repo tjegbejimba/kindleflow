@@ -18,13 +18,13 @@ afterEach(async () => {
 });
 
 describe("AuthStore", () => {
-  it("requires an invite code for new users, then verifies login with a magic token", () => {
-    expect(() => store.createLoginToken("tj@example.com", undefined, "secret")).toThrow(/invite/i);
+  it("requires an invite code for new users, then verifies login with a one-time email code", () => {
+    expect(() => store.createLoginCode("tj@example.com", undefined, "secret")).toThrow(/invite/i);
 
-    const magicToken = store.createLoginToken("TJ@Example.com", "secret", "secret");
-    expect(magicToken).toHaveLength(48);
+    const loginCode = store.createLoginCode("TJ@Example.com", "secret", "secret");
+    expect(loginCode).toMatch(/^\d{6}$/);
 
-    const sessionToken = store.consumeMagicToken(magicToken);
+    const sessionToken = store.consumeLoginCode("tj@example.com", loginCode);
     expect(sessionToken).toHaveLength(48);
 
     const user = store.getUserBySession(sessionToken);
@@ -42,16 +42,16 @@ describe("AuthStore", () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "kindleflow-auth-"));
     store = new AuthStore(path.join(tempDir, "kindleflow.sqlite"), { sessionTtlMs: 1 });
 
-    const magicToken = store.createLoginToken("short@example.com", "secret", "secret");
-    const sessionToken = store.consumeMagicToken(magicToken);
+    const loginCode = store.createLoginCode("short@example.com", "secret", "secret");
+    const sessionToken = store.consumeLoginCode("short@example.com", loginCode);
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(store.getUserBySession(sessionToken)).toBeNull();
   });
 
   it("stores a per-user Kindle email and dedupes subscriptions", () => {
-    const token = store.createLoginToken("reader@example.com", "secret", "secret");
-    const session = store.consumeMagicToken(token);
+    const token = store.createLoginCode("reader@example.com", "secret", "secret");
+    const session = store.consumeLoginCode("reader@example.com", token);
     const user = store.getUserBySession(session);
     expect(user).not.toBeNull();
 
@@ -80,8 +80,8 @@ describe("AuthStore", () => {
   });
 
   it("prunes delivered posts older than a user's retention setting", async () => {
-    const token = store.createLoginToken("reader@example.com", "secret", "secret");
-    const session = store.consumeMagicToken(token);
+    const token = store.createLoginCode("reader@example.com", "secret", "secret");
+    const session = store.consumeLoginCode("reader@example.com", token);
     const user = store.getUserBySession(session)!;
     store.updateUserProfile(user.id, { subscriptionRetentionDays: 7 });
     const subscription = store.addSubscription(user.id, {
@@ -111,8 +111,8 @@ describe("AuthStore", () => {
   });
 
   it("creates OPDS tokens and tracks generated library items", () => {
-    const token = store.createLoginToken("reader@example.com", "secret", "secret");
-    const session = store.consumeMagicToken(token);
+    const token = store.createLoginCode("reader@example.com", "secret", "secret");
+    const session = store.consumeLoginCode("reader@example.com", token);
     const user = store.getUserBySession(session)!;
     const subscription = store.addSubscription(user.id, {
       feedUrl: "https://example.substack.com/feed",
@@ -163,8 +163,8 @@ describe("AuthStore", () => {
   });
 
   it("records Kindle delivery attempts and retry results", () => {
-    const token = store.createLoginToken("reader@example.com", "secret", "secret");
-    const session = store.consumeMagicToken(token);
+    const token = store.createLoginCode("reader@example.com", "secret", "secret");
+    const session = store.consumeLoginCode("reader@example.com", token);
     const user = store.getUserBySession(session)!;
     const item = store.addLibraryItem(user.id, {
       type: "article",
@@ -217,8 +217,8 @@ describe("AuthStore", () => {
   });
 
   it("removes expired library items when pruning delivered posts", () => {
-    const token = store.createLoginToken("reader@example.com", "secret", "secret");
-    const session = store.consumeMagicToken(token);
+    const token = store.createLoginCode("reader@example.com", "secret", "secret");
+    const session = store.consumeLoginCode("reader@example.com", token);
     const user = store.getUserBySession(session)!;
     store.updateUserProfile(user.id, { subscriptionRetentionDays: 7 });
     const subscription = store.addSubscription(user.id, {

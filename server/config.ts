@@ -1,4 +1,5 @@
 import path from "node:path";
+import { parseAdditionalCookieHosts, type SubstackAuthConfig } from "./substackAuth.js";
 
 export interface AppConfig {
   host: string;
@@ -10,6 +11,7 @@ export interface AppConfig {
   inviteCode?: string;
   cookieSecure: boolean;
   sessionTtlDays: number;
+  substackAuth?: SubstackAuthConfig;
   smtp?: SmtpConfig;
 }
 
@@ -34,6 +36,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     inviteCode: env.INVITE_CODE,
     cookieSecure: env.COOKIE_SECURE === "true",
     sessionTtlDays: parsePositiveInteger(env.SESSION_TTL_DAYS, 180),
+    substackAuth: loadSubstackAuthConfig(env),
     smtp
   };
 }
@@ -57,6 +60,18 @@ function loadSmtpConfig(env: NodeJS.ProcessEnv): SmtpConfig | undefined {
     user: env.SMTP_USER,
     pass: env.SMTP_PASS,
     from
+  };
+}
+
+function loadSubstackAuthConfig(env: NodeJS.ProcessEnv): SubstackAuthConfig | undefined {
+  const cookie = env.SUBSTACK_COOKIE?.trim();
+  if (!cookie) {
+    return undefined;
+  }
+
+  return {
+    cookie,
+    additionalCookieHosts: parseAdditionalCookieHosts(env.SUBSTACK_COOKIE_HOSTS)
   };
 }
 
