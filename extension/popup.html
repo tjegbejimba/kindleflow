@@ -12,6 +12,13 @@
       <label for="app-url">KindleFlow URL</label>
       <input id="app-url" type="url" placeholder="https://kindleflow.tail217062.ts.net" />
       <button id="send-button" type="button">Send current page</button>
+      <div id="result" class="result" hidden>
+        <strong id="result-title"></strong>
+        <span id="result-filename"></span>
+        <a id="download-link" class="button secondary-link" target="_blank" rel="noreferrer">Download EPUB</a>
+        <button id="manual-send-button" type="button" class="secondary" hidden>Send to Kindle</button>
+        <a id="open-app-link" class="open-app-link" target="_blank" rel="noreferrer">Open in KindleFlow</a>
+      </div>
       <p id="status" class="status" role="status"></p>
     </main>
     <script src="popup.js"></script>

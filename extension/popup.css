@@ -53,6 +53,18 @@ button {
   padding: 0.8rem 1rem;
 }
 
+.button {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+}
+
+button.secondary,
+.secondary-link {
+  background: #eadccb;
+  color: #1d1a17;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.65;
@@ -71,4 +83,30 @@ button:disabled {
   color: #5d5349;
   line-height: 1.45;
   min-height: 2.8rem;
+}
+
+.result {
+  border-top: 1px solid #dbcdbb;
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.result strong,
+.result span {
+  display: block;
+  line-height: 1.35;
+}
+
+.result span {
+  color: #6f6257;
+  font-size: 0.85rem;
+  margin-top: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.open-app-link {
+  color: #8a5a24;
+  display: inline-block;
+  font-weight: 800;
+  margin-top: 0.9rem;
 }

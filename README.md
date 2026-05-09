@@ -93,18 +93,19 @@ For paid Substack posts, set `SUBSTACK_COOKIE` to the browser cookie value from 
 
 ## Browser extension
 
-The `extension/` directory contains an unpacked WebExtension MVP for saving pages that are already readable in your browser, including Substack premium posts. It does not read or upload Substack cookies; it captures the rendered page HTML, opens KindleFlow, and lets the first-party KindleFlow page import the article with your existing KindleFlow login session.
+The `extension/` directory contains an unpacked WebExtension MVP for saving pages that are already readable in your browser, including Substack premium posts. It does not read or upload Substack cookies; it captures the rendered page HTML, sends it to KindleFlow, generates the EPUB, and auto-sends it to Kindle when your KindleFlow profile has auto-send enabled.
 
 To load it in Chrome/Chromium:
 
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
 3. Choose “Load unpacked” and select this repo’s `extension/` directory.
-4. Open a readable Substack post, click the KindleFlow extension, confirm the KindleFlow URL, and choose “Send current page”.
+4. Sign in to KindleFlow in the same browser.
+5. Open a readable Substack post, click the KindleFlow extension, confirm the KindleFlow URL, and choose “Send current page”.
 
 For Firefox, load the same `extension/manifest.json` temporarily from `about:debugging#/runtime/this-firefox`.
 
-The default extension URL is `https://kindleflow.tail217062.ts.net`. If you use a different KindleFlow URL, enter it in the popup. The extension will ask for permission to that app origin so it can hand the captured article to the opened KindleFlow tab.
+The default extension URL is `https://kindleflow.tail217062.ts.net`. If you use a different KindleFlow URL, enter it in the popup. The extension will ask for permission to that app origin so it can call KindleFlow’s import/generate/send APIs. After generation, the popup shows download and manual “Send to Kindle” actions when needed.
 
 ### Gmail SMTP
 
