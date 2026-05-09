@@ -22,11 +22,9 @@ services:
       - sys_module
 
   kindleflow:
-    image: ghcr.io/tjegbejimba/kindleflow:latest
+    build: .
     container_name: kindleflow
     restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
     ports:
       - "${PORT:-3000}:3000"
     environment:

@@ -132,14 +132,11 @@ mkdir -p /volume2/docker/projects/kindleflow
 cd /volume2/docker/projects/kindleflow
 ```
 
-Copy `docker-compose.yml`, `tailscale/config/serve.json`, and create an `.env`, then start it:
+Copy the project files there, create an optional `.env`, then start it:
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose up -d --build
 ```
-
-The `kindleflow` service uses `ghcr.io/tjegbejimba/kindleflow:latest` and has the Watchtower enable label. Pushes to `main` publish a new GHCR image, and Watchtower can pull/restart the container on its normal schedule or via the Watchtower HTTP API.
 
 Example NAS `.env` for Tailscale access on port `3060`:
 
