@@ -1,6 +1,6 @@
 # KindleFlow
 
-Self-hosted article-to-Kindle app for personal use. Paste an article URL, extract the readable content, preview it, generate a Kindle-friendly EPUB, then download it or automatically send it to your Kindle email address.
+Self-hosted article-to-Kindle app for personal use. Paste a public article URL or use the browser extension for paid Substack posts, generate a Kindle-friendly EPUB, then download it or automatically send it to your Kindle email address.
 
 ## Features
 
@@ -14,7 +14,7 @@ Self-hosted article-to-Kindle app for personal use. Paste an article URL, extrac
 - Per-user Kindle email settings and automatic EPUB delivery
 - Kindle delivery history with SMTP response logging, test sends, latest-EPUB sends, and failed-send retry
 - Public Substack/RSS subscriptions with daily polling and dedupe
-- Browser extension MVP for sending rendered Substack premium posts without copying cookies
+- Browser extension for sending rendered paid Substack posts without copying cookies
 - Private OPDS catalogs for KOReader or other OPDS-capable readers
 - PWA manifest/icon for installing from the browser
 - Docker Compose deployment for a Synology NAS
@@ -89,9 +89,9 @@ If `SMTP_HOST` or `SMTP_FROM` are missing, users cannot receive login codes or K
 
 Login sessions are stored in an HTTP-only browser cookie. Use one consistent app URL for both `APP_BASE_URL` and browsing the site because cookies are scoped to the exact host; for example, a login cookie from `http://100.104.13.117:3060` will not apply when visiting the Tailscale hostname.
 
-For paid Substack posts, set `SUBSTACK_COOKIE` to the browser cookie value from a logged-in Substack session, without the `Cookie:` prefix. KindleFlow sends it only to `substack.com`, `*.substack.com`, and hosts listed in `SUBSTACK_COOKIE_HOSTS` to avoid leaking it to unrelated article sites.
+For most users, paid Substack posts should be saved with the browser extension because the server cannot see a user's Substack browser login. As an admin-only fallback, set `SUBSTACK_COOKIE` to the browser cookie value from a logged-in Substack session, without the `Cookie:` prefix. KindleFlow sends it only to `substack.com`, `*.substack.com`, and hosts listed in `SUBSTACK_COOKIE_HOSTS` to avoid leaking it to unrelated article sites.
 
-## Browser extension
+## Browser extension for paid Substack
 
 The `extension/` directory contains an unpacked WebExtension MVP for saving pages that are already readable in your browser, including Substack premium posts. It does not read or upload Substack cookies; it captures the rendered page HTML, sends it to KindleFlow, generates the EPUB, and auto-sends it to Kindle when your KindleFlow profile has auto-send enabled.
 

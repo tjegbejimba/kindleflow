@@ -546,6 +546,22 @@ function App() {
             </button>
           </section>
 
+          <section className="card extension-callout">
+            <div>
+              <p className="eyebrow">Best for paid Substack</p>
+              <h2>Use the KindleFlow browser extension</h2>
+              <p className="muted">
+                Paid Substack posts need your browser login. The extension captures the article you can already read,
+                generates the EPUB, and sends it to Kindle without copying Substack cookies.
+              </p>
+            </div>
+            <div className="extension-steps">
+              <span>1. Sign in here</span>
+              <span>2. Open the paid post</span>
+              <span>3. Click the extension</span>
+            </div>
+          </section>
+
           <section className="card">
             <h2>Kindle settings</h2>
             <p className="muted">
@@ -691,6 +707,10 @@ function App() {
 
           <form className="card url-form" onSubmit={fetchArticle}>
             <label htmlFor="article-url">Article URL</label>
+            <p className="muted">
+              Works best for public articles. For paid Substack posts, use the browser extension so KindleFlow can import
+              the article from your logged-in browser session.
+            </p>
             <div className="input-row">
               <input
                 id="article-url"
