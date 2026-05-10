@@ -22,7 +22,10 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "kindleflow-extension@tjegbejimba.com"
+      "id": "kindleflow-extension@tjegbejimba.com",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   }
 }

@@ -66,6 +66,9 @@ function validateManifest(manifest) {
   if (!manifest.browser_specific_settings?.gecko?.id) {
     throw new Error("Firefox package requires browser_specific_settings.gecko.id.");
   }
+  if (!manifest.browser_specific_settings.gecko.data_collection_permissions?.required?.includes("none")) {
+    throw new Error("Firefox package requires data_collection_permissions.required to declare no data collection.");
+  }
 }
 
 function stripUndefined(value) {
