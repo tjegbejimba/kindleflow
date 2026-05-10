@@ -1,0 +1,19 @@
+Name
+KindleFlow
+
+Short description
+Send paid Substack and other readable articles from your browser to KindleFlow.
+
+Detailed description
+KindleFlow turns readable web articles into Kindle-friendly EPUB files. The browser extension is the recommended way to save paid Substack posts because it works from the page you can already read in your browser.
+
+Open a readable article, click the KindleFlow extension, and send the current page to your configured KindleFlow server. KindleFlow imports the rendered article, generates an EPUB, and can automatically send it to your Kindle email address when your KindleFlow profile is configured for auto-send.
+
+Privacy
+The extension sends the rendered page HTML to the KindleFlow server URL you configure. It does not collect analytics and does not read, store, or transmit Substack cookies.
+
+Permission justification
+activeTab: lets the extension access only the current tab after the user clicks the extension.
+scripting: captures the rendered article HTML from the current tab.
+storage: saves the configured KindleFlow server URL.
+host permissions: allow the popup to call the configured KindleFlow server and support Substack article pages.

@@ -106,6 +106,14 @@ This creates:
 - `dist/extensions/kindleflow-chrome.zip` for Chrome Web Store
 - `dist/extensions/kindleflow-firefox.zip` for Firefox Add-ons
 
+To generate Chrome Web Store screenshots and listing copy:
+
+```bash
+npm run generate:extension-store-assets
+```
+
+This creates screenshots and listing text in `extension/store-assets/`.
+
 Store listing notes:
 
 - Summary: `Send paid Substack and other readable articles from your browser to KindleFlow.`
