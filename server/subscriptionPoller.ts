@@ -5,7 +5,7 @@ import type { AuthStore, SubscriptionWithUser } from "./authStore.js";
 import type { AppConfig } from "./config.js";
 import { fetchAndExtractArticle } from "./articleFetcher.js";
 import { fetchFeed } from "./feed.js";
-import { generateKindleFile } from "./kindleFile.js";
+import { generateKindleFile, saveKindlePdf } from "./kindleFile.js";
 import { sendFileToKindle } from "./mailer.js";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -71,15 +71,23 @@ async function pollSubscription(
     }
 
     const fetched = await fetchAndExtractArticle(post.url, { substackAuth: config.substackAuth });
-    const generated = await generateKindleFile(fetched.article, {
-      dataDir: config.dataDir,
-      sourceUrl: fetched.sourceUrl
-    });
+    const generated =
+      fetched.kind === "pdf"
+        ? await saveKindlePdf({
+            buffer: fetched.pdfBuffer,
+            title: fetched.title,
+            dataDir: config.dataDir
+          })
+        : await generateKindleFile(fetched.article, {
+            dataDir: config.dataDir,
+            sourceUrl: fetched.sourceUrl
+          });
+    const itemTitle = fetched.kind === "pdf" ? fetched.title : fetched.article.title;
 
     const libraryItem = store.addLibraryItem(subscription.userId, {
       type: "subscription_post",
       subscriptionId: subscription.id,
-      title: fetched.article.title,
+      title: itemTitle,
       sourceUrl: fetched.sourceUrl,
       filename: generated.filename,
       mimeType: generated.mimeType
@@ -139,7 +147,7 @@ async function deleteGeneratedFiles(
   const resolvedDataDir = path.resolve(dataDir);
   for (const filename of filenames) {
     const safeFilename = path.basename(filename);
-    if (safeFilename !== filename || !safeFilename.endsWith(".epub")) {
+    if (safeFilename !== filename || !isRetainableFilename(safeFilename)) {
       logger.warn({ filename }, "skipping unsafe retained file deletion");
       continue;
     }
@@ -157,4 +165,9 @@ async function deleteGeneratedFiles(
       throw error;
     });
   }
+}
+
+function isRetainableFilename(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return lower.endsWith(".epub") || lower.endsWith(".pdf");
 }

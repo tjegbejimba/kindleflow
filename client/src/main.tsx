@@ -28,10 +28,26 @@ interface ExtractedArticle {
   siteName?: string;
 }
 
-interface FetchResult {
+interface ArticleFetchResult {
+  kind: "article";
   sourceUrl: string;
   article: ExtractedArticle;
 }
+
+interface PdfFetchResult {
+  kind: "pdf";
+  sourceUrl: string;
+  title: string;
+  generated: {
+    filename: string;
+    mimeType: "application/pdf";
+    downloadUrl: string;
+    sentToKindle: boolean;
+    delivery?: KindleDelivery;
+  };
+}
+
+type FetchResult = ArticleFetchResult | PdfFetchResult;
 
 interface ExtensionImportPayload {
   sourceUrl: string;
@@ -257,8 +273,20 @@ function App() {
 
     try {
       const response = await apiPost<FetchResult>("/api/articles/fetch", { url });
-      setResult(response);
-      setStatus("Article extracted. Review the preview, then generate your Kindle file.");
+      if (response.kind === "pdf") {
+        setResult(null);
+        setGeneratedFile({
+          filename: response.generated.filename,
+          downloadUrl: response.generated.downloadUrl,
+          sentToKindle: response.generated.sentToKindle,
+          delivery: response.generated.delivery
+        });
+        await loadDeliveries();
+        setStatus(deliveryStatusMessage(response.generated.delivery, "PDF imported."));
+      } else {
+        setResult(response);
+        setStatus("Article extracted. Review the preview, then generate your Kindle file.");
+      }
     } catch (err) {
       setResult(null);
       setStatus("");
@@ -276,7 +304,7 @@ function App() {
     setGeneratedFile(null);
 
     try {
-      const response = await apiPost<FetchResult>("/api/articles/import", payload);
+      const response = await apiPost<ArticleFetchResult>("/api/articles/import", payload);
       setResult(response);
       setUrl(response.sourceUrl);
       setStatus("Article imported. Review the preview, then generate your Kindle file.");
@@ -290,7 +318,7 @@ function App() {
   }
 
   async function generateFile() {
-    if (!result) return;
+    if (!result || result.kind !== "article") return;
     setBusyAction("generate");
     setError("");
     setStatus("Generating EPUB...");
@@ -726,7 +754,7 @@ function App() {
             </div>
           </form>
 
-          {result ? (
+          {result && result.kind === "article" ? (
             <section className="card preview">
               <div className="preview-heading">
                 <div>

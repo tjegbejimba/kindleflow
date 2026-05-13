@@ -38,6 +38,8 @@ describe("fetchAndExtractArticle", () => {
       }
     });
 
+    expect(result.kind).toBe("article");
+    if (result.kind !== "article") throw new Error("expected article");
     expect(result.article.title).toBe("Paid Substack Post");
     expect(result.article.textContent).toContain("full premium article body");
   });
@@ -59,5 +61,42 @@ describe("fetchAndExtractArticle", () => {
         additionalCookieHosts: []
       }
     });
+  });
+
+  it("returns a PDF result when the URL serves a PDF document", async () => {
+    const pdfBytes = Buffer.concat([
+      Buffer.from("%PDF-1.4\n"),
+      Buffer.from("Mock pdf body for KindleFlow tests.\n%%EOF\n")
+    ]);
+    const fetchMock = vi.fn(async () =>
+      new Response(pdfBytes, {
+        headers: {
+          "content-type": "application/pdf",
+          "content-disposition": 'attachment; filename="Quarterly Report.pdf"'
+        }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAndExtractArticle("https://example.com/files/q4.pdf");
+
+    expect(result.kind).toBe("pdf");
+    if (result.kind !== "pdf") throw new Error("expected pdf");
+    expect(result.title).toBe("Quarterly Report");
+    expect(result.pdfBuffer.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(result.pdfBuffer.equals(pdfBytes)).toBe(true);
+  });
+
+  it("rejects responses that are advertised as PDF but lack the %PDF- magic", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(Buffer.from("<html>not really pdf</html>"), {
+        headers: { "content-type": "application/pdf" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchAndExtractArticle("https://example.com/files/fake.pdf")).rejects.toThrow(
+      /valid PDF/
+    );
   });
 });

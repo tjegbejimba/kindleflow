@@ -11,7 +11,7 @@ import { fetchAndExtractArticle } from "./articleFetcher.js";
 import { isEmailDeliveryEnabled, loadConfig, type SmtpConfig } from "./config.js";
 import { fetchFeed } from "./feed.js";
 import { FileInviteCodes } from "./inviteCodes.js";
-import { generateKindleFile } from "./kindleFile.js";
+import { generateKindleFile, saveKindlePdf } from "./kindleFile.js";
 import { sendFileToKindle, sendLoginCode } from "./mailer.js";
 import { renderOpdsAcquisitionFeed, renderOpdsNavigationFeed } from "./opds.js";
 import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionPoller.js";
@@ -143,13 +143,51 @@ app.post("/api/me/opds/rotate", async (request) => {
 });
 
 app.post("/api/articles/fetch", async (request) => {
-  requireUser(request);
+  const user = requireUser(request);
   const body = request.body as { url?: unknown };
   if (typeof body.url !== "string") {
     throw new Error("URL is required.");
   }
 
-  return fetchAndExtractArticle(body.url, { substackAuth: config.substackAuth });
+  const fetched = await fetchAndExtractArticle(body.url, { substackAuth: config.substackAuth });
+
+  if (fetched.kind === "pdf") {
+    const generated = await saveKindlePdf({
+      buffer: fetched.pdfBuffer,
+      title: fetched.title,
+      dataDir: config.dataDir
+    });
+    const libraryItem = store.addLibraryItem(user.id, {
+      type: "article",
+      title: fetched.title,
+      sourceUrl: fetched.sourceUrl,
+      filename: generated.filename,
+      mimeType: generated.mimeType
+    });
+    const delivery =
+      config.smtp && user.kindleEmail && user.autoSendToKindle
+        ? await sendKindleDelivery(user, libraryItem, "auto")
+        : undefined;
+
+    return {
+      kind: "pdf" as const,
+      sourceUrl: fetched.sourceUrl,
+      title: fetched.title,
+      generated: {
+        filename: generated.filename,
+        mimeType: generated.mimeType,
+        downloadUrl: `/files/${encodeURIComponent(generated.filename)}`,
+        sentToKindle: delivery?.status === "sent",
+        delivery
+      }
+    };
+  }
+
+  return {
+    kind: "article" as const,
+    sourceUrl: fetched.sourceUrl,
+    article: fetched.article
+  };
 });
 
 app.post("/api/articles/import", { bodyLimit: MAX_IMPORTED_HTML_BYTES }, async (request) => {
@@ -159,10 +197,11 @@ app.post("/api/articles/import", { bodyLimit: MAX_IMPORTED_HTML_BYTES }, async (
     throw new Error("Source URL and rendered HTML are required.");
   }
 
-  return importRenderedArticle({
+  const imported = importRenderedArticle({
     sourceUrl: body.sourceUrl,
     html: body.html
   });
+  return { kind: "article" as const, ...imported };
 });
 
 app.post("/api/articles/generate", async (request) => {
@@ -220,7 +259,7 @@ app.post("/api/articles/send", async (request) => {
   }
 
   const safeFilename = path.basename(body.filename);
-  if (safeFilename !== body.filename || !safeFilename.endsWith(".epub")) {
+  if (safeFilename !== body.filename || !isAllowedKindleFilename(safeFilename)) {
     const error = new Error("Invalid generated file name.");
     Object.assign(error, { statusCode: 400 });
     throw error;
@@ -228,7 +267,7 @@ app.post("/api/articles/send", async (request) => {
 
   const libraryItem = store.getLibraryItemForUserByFilename(user.id, safeFilename);
   if (!libraryItem) {
-    const error = new Error("Generated EPUB is not in your library yet.");
+    const error = new Error("Generated file is not in your library yet.");
     Object.assign(error, { statusCode: 404 });
     throw error;
   }
@@ -430,7 +469,7 @@ app.get("/opds/:token/files/:filename", async (request, reply) => {
   const { token, filename } = request.params as { token: string; filename: string };
   requireOpdsUser(token);
   const safeFilename = path.basename(filename);
-  if (safeFilename !== filename || !safeFilename.endsWith(".epub")) {
+  if (safeFilename !== filename || !isAllowedKindleFilename(safeFilename)) {
     return reply.code(400).send({ message: "Invalid filename." });
   }
 
@@ -557,4 +596,9 @@ function sessionCookieOptions(secure: boolean, ttlDays: number) {
 
 function daysToMs(days: number): number {
   return days * 24 * 60 * 60 * 1000;
+}
+
+function isAllowedKindleFilename(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return lower.endsWith(".epub") || lower.endsWith(".pdf");
 }

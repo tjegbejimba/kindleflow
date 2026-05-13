@@ -21,7 +21,11 @@ export async function sendFileToKindle(
   kindleEmail: string
 ): Promise<{ messageId?: string; response?: string }> {
   const safeFilename = path.basename(filename);
-  if (safeFilename !== filename || !safeFilename.endsWith(".epub")) {
+  if (safeFilename !== filename) {
+    throw new Error("Invalid generated file name.");
+  }
+  const contentType = mimeTypeForFilename(safeFilename);
+  if (!contentType) {
     throw new Error("Invalid generated file name.");
   }
 
@@ -37,12 +41,12 @@ export async function sendFileToKindle(
     from: config.from,
     to: kindleEmail,
     subject: "KindleFlow article",
-    text: "Attached is your KindleFlow EPUB.",
+    text: "Attached is your KindleFlow file.",
     attachments: [
       {
         filename: safeFilename,
         content: createReadStream(absolutePath),
-        contentType: "application/epub+zip"
+        contentType
       }
     ]
   });
@@ -51,6 +55,17 @@ export async function sendFileToKindle(
     messageId: typeof info.messageId === "string" ? info.messageId : undefined,
     response: typeof info.response === "string" ? info.response : undefined
   };
+}
+
+function mimeTypeForFilename(filename: string): string | undefined {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".epub")) {
+    return "application/epub+zip";
+  }
+  if (lower.endsWith(".pdf")) {
+    return "application/pdf";
+  }
+  return undefined;
 }
 
 function createTransporter(config: SmtpConfig) {

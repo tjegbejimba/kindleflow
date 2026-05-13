@@ -24,7 +24,7 @@ export interface OpdsAcquisitionEntry {
   updated: string;
   sourceUrl?: string;
   href: string;
-  mimeType: "application/epub+zip";
+  mimeType: "application/epub+zip" | "application/pdf";
 }
 
 const OPDS_NAVIGATION_TYPE = "application/atom+xml;profile=opds-catalog;kind=navigation";

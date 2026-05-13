@@ -20,9 +20,11 @@ export interface LibraryItem {
   title: string;
   sourceUrl?: string;
   filename: string;
-  mimeType: "application/epub+zip";
+  mimeType: LibraryItemMimeType;
   createdAt: string;
 }
+
+export type LibraryItemMimeType = "application/epub+zip" | "application/pdf";
 
 export interface LibraryItemInput {
   type: "article" | "subscription_post";
@@ -30,7 +32,7 @@ export interface LibraryItemInput {
   title: string;
   sourceUrl?: string;
   filename: string;
-  mimeType: "application/epub+zip";
+  mimeType: LibraryItemMimeType;
 }
 
 export interface KindleDelivery {
@@ -720,7 +722,7 @@ interface DbLibraryItem {
   title: string;
   source_url?: string;
   filename: string;
-  mime_type: "application/epub+zip";
+  mime_type: LibraryItemMimeType;
   created_at: string;
 }
 

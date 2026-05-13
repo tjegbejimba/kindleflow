@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { generateCoverPng } from "../server/coverImage.js";
-import { generateKindleFile } from "../server/kindleFile.js";
+import { generateKindleFile, saveKindlePdf } from "../server/kindleFile.js";
 
 let tempDir: string;
 
@@ -44,5 +44,23 @@ describe("generateKindleFile", () => {
     expect(cover.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     expect(cover.includes(Buffer.from("IHDR"))).toBe(true);
     expect(cover.includes(Buffer.from("IDAT"))).toBe(true);
+  });
+});
+
+describe("saveKindlePdf", () => {
+  it("writes a PDF buffer to the data directory with a slugified filename", async () => {
+    const pdfBytes = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.from("Hello Kindle.\n%%EOF\n")]);
+    const file = await saveKindlePdf({
+      buffer: pdfBytes,
+      title: "Quarterly Report 2025!",
+      dataDir: tempDir
+    });
+
+    expect(file.mimeType).toBe("application/pdf");
+    expect(file.filename).toMatch(/^quarterly-report-2025-[a-z0-9]+\.pdf$/);
+    expect(file.absolutePath.startsWith(tempDir)).toBe(true);
+
+    const written = await readFile(file.absolutePath);
+    expect(written.equals(pdfBytes)).toBe(true);
   });
 });

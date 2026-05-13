@@ -11,11 +11,13 @@ type EpubGenerator = (optionsOrTitle: Options | string, content: Content, ...arg
 const require = createRequire(import.meta.url);
 const generateEpub = (require("epub-gen-memory") as { default: EpubGenerator }).default;
 
+export type GeneratedKindleFileMimeType = "application/epub+zip" | "application/pdf";
+
 export interface GeneratedKindleFile {
   id: string;
   filename: string;
   absolutePath: string;
-  mimeType: "application/epub+zip";
+  mimeType: GeneratedKindleFileMimeType;
 }
 
 export interface GenerateKindleFileOptions {
@@ -77,6 +79,33 @@ export async function generateKindleFile(
     filename,
     absolutePath,
     mimeType: "application/epub+zip"
+  };
+}
+
+export interface SaveKindlePdfOptions {
+  buffer: Buffer | Uint8Array;
+  title: string;
+  dataDir: string;
+}
+
+export async function saveKindlePdf(options: SaveKindlePdfOptions): Promise<GeneratedKindleFile> {
+  const id = randomUUID().slice(0, 8);
+  const filename = `${slugify(options.title)}-${id}.pdf`;
+  const dataDir = path.resolve(options.dataDir);
+  const absolutePath = path.resolve(dataDir, filename);
+
+  if (!absolutePath.startsWith(`${dataDir}${path.sep}`)) {
+    throw new Error("Generated file path escaped the data directory.");
+  }
+
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(absolutePath, options.buffer);
+
+  return {
+    id,
+    filename,
+    absolutePath,
+    mimeType: "application/pdf"
   };
 }
 
