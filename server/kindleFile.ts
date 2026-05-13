@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { Content, Options } from "epub-gen-memory";
+import { PDFDocument } from "pdf-lib";
 import type { ExtractedArticle } from "./articleExtraction.js";
 import { generateCoverPng } from "./coverImage.js";
 
@@ -10,6 +11,8 @@ type EpubGenerator = (optionsOrTitle: Options | string, content: Content, ...arg
 
 const require = createRequire(import.meta.url);
 const generateEpub = (require("epub-gen-memory") as { default: EpubGenerator }).default;
+const PDF_COVER_WIDTH = 450;
+const PDF_COVER_HEIGHT = 600;
 
 export type GeneratedKindleFileMimeType = "application/epub+zip" | "application/pdf";
 
@@ -86,6 +89,7 @@ export interface SaveKindlePdfOptions {
   buffer: Buffer | Uint8Array;
   title: string;
   dataDir: string;
+  sourceUrl?: string;
 }
 
 export async function saveKindlePdf(options: SaveKindlePdfOptions): Promise<GeneratedKindleFile> {
@@ -99,7 +103,7 @@ export async function saveKindlePdf(options: SaveKindlePdfOptions): Promise<Gene
   }
 
   await mkdir(dataDir, { recursive: true });
-  await writeFile(absolutePath, options.buffer);
+  await writeFile(absolutePath, await addKindleFlowPdfCover(options));
 
   return {
     id,
@@ -107,6 +111,32 @@ export async function saveKindlePdf(options: SaveKindlePdfOptions): Promise<Gene
     absolutePath,
     mimeType: "application/pdf"
   };
+}
+
+async function addKindleFlowPdfCover(options: Pick<SaveKindlePdfOptions, "buffer" | "title" | "sourceUrl">): Promise<Buffer> {
+  const sourcePdf = await PDFDocument.load(options.buffer);
+  const outputPdf = await PDFDocument.create();
+
+  outputPdf.setTitle(options.title);
+  outputPdf.setAuthor("KindleFlow");
+  outputPdf.setCreator("KindleFlow");
+  outputPdf.setProducer("KindleFlow");
+
+  const coverPng = await outputPdf.embedPng(generateCoverPng({ title: options.title, sourceUrl: options.sourceUrl }));
+  const coverPage = outputPdf.addPage([PDF_COVER_WIDTH, PDF_COVER_HEIGHT]);
+  coverPage.drawImage(coverPng, {
+    x: 0,
+    y: 0,
+    width: PDF_COVER_WIDTH,
+    height: PDF_COVER_HEIGHT
+  });
+
+  const originalPages = await outputPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
+  for (const page of originalPages) {
+    outputPdf.addPage(page);
+  }
+
+  return Buffer.from(await outputPdf.save());
 }
 
 function slugify(value: string): string {

@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PDFDocument } from "pdf-lib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { generateCoverPng } from "../server/coverImage.js";
 import { generateKindleFile, saveKindlePdf } from "../server/kindleFile.js";
@@ -48,12 +49,16 @@ describe("generateKindleFile", () => {
 });
 
 describe("saveKindlePdf", () => {
-  it("writes a PDF buffer to the data directory with a slugified filename", async () => {
-    const pdfBytes = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.from("Hello Kindle.\n%%EOF\n")]);
+  it("writes a PDF with a KindleFlow cover page before the original document", async () => {
+    const original = await PDFDocument.create();
+    original.addPage([320, 480]);
+    const pdfBytes = Buffer.from(await original.save());
+
     const file = await saveKindlePdf({
       buffer: pdfBytes,
       title: "Quarterly Report 2025!",
-      dataDir: tempDir
+      dataDir: tempDir,
+      sourceUrl: "https://example.com/reports/q4.pdf"
     });
 
     expect(file.mimeType).toBe("application/pdf");
@@ -61,6 +66,14 @@ describe("saveKindlePdf", () => {
     expect(file.absolutePath.startsWith(tempDir)).toBe(true);
 
     const written = await readFile(file.absolutePath);
-    expect(written.equals(pdfBytes)).toBe(true);
+    expect(written.equals(pdfBytes)).toBe(false);
+
+    const saved = await PDFDocument.load(written);
+    expect(saved.getPageCount()).toBe(2);
+    const [coverPage, originalPage] = saved.getPages();
+    expect(coverPage.getWidth()).toBe(450);
+    expect(coverPage.getHeight()).toBe(600);
+    expect(originalPage.getWidth()).toBe(320);
+    expect(originalPage.getHeight()).toBe(480);
   });
 });

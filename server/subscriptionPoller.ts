@@ -76,7 +76,8 @@ async function pollSubscription(
         ? await saveKindlePdf({
             buffer: fetched.pdfBuffer,
             title: fetched.title,
-            dataDir: config.dataDir
+            dataDir: config.dataDir,
+            sourceUrl: fetched.sourceUrl
           })
         : await generateKindleFile(fetched.article, {
             dataDir: config.dataDir,

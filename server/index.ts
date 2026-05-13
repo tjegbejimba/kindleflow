@@ -155,7 +155,8 @@ app.post("/api/articles/fetch", async (request) => {
     const generated = await saveKindlePdf({
       buffer: fetched.pdfBuffer,
       title: fetched.title,
-      dataDir: config.dataDir
+      dataDir: config.dataDir,
+      sourceUrl: fetched.sourceUrl
     });
     const libraryItem = store.addLibraryItem(user.id, {
       type: "article",
