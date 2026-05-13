@@ -155,6 +155,48 @@ form > button {
   color: #8a1f12;
 }
 
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.75rem;
+  transform: translateX(-50%);
+  max-width: min(90vw, 32rem);
+  padding: 0.9rem 1.4rem;
+  border-radius: 999px;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: 0 12px 32px rgba(29, 26, 23, 0.25);
+  z-index: 1000;
+  animation: toast-in 240ms ease-out;
+}
+
+.toast-success {
+  background: #1d1a17;
+  color: #fffaf3;
+}
+
+.toast-error {
+  background: #8a1f12;
+  color: #fffaf3;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
 .muted {
   color: #6f6257;
   line-height: 1.55;

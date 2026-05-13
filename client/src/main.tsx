@@ -105,6 +105,37 @@ function App() {
   const [pendingExtensionImport, setPendingExtensionImport] = React.useState<ExtensionImportPayload | null>(null);
   const [status, setStatus] = React.useState("");
   const [error, setError] = React.useState("");
+  const [toast, setToast] = React.useState<{ id: number; kind: "success" | "error"; message: string } | null>(null);
+  const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashToast = React.useCallback((kind: "success" | "error", message: string) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToast({ id: Date.now(), kind, message });
+    toastTimerRef.current = setTimeout(() => setToast(null), 5000);
+  }, []);
+
+  const flashDeliveryToast = React.useCallback(
+    (delivery: KindleDelivery | undefined, action: string) => {
+      if (!delivery) return;
+      if (delivery.status === "sent") {
+        flashToast("success", `${action} sent to ${delivery.kindleEmail}.`);
+      } else if (delivery.status === "failed") {
+        flashToast("error", `${action} failed: ${delivery.error ?? "unknown error"}`);
+      }
+    },
+    [flashToast]
+  );
+
+  React.useEffect(
+    () => () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    },
+    []
+  );
   const [busyAction, setBusyAction] = React.useState<
     | "login"
     | "profile"
@@ -283,6 +314,7 @@ function App() {
         });
         await loadDeliveries();
         setStatus(deliveryStatusMessage(response.generated.delivery, "PDF imported."));
+        flashDeliveryToast(response.generated.delivery, "PDF");
       } else {
         setResult(response);
         setStatus("Article extracted. Review the preview, then generate your Kindle file.");
@@ -331,6 +363,7 @@ function App() {
       setGeneratedFile(response);
       await loadDeliveries();
       setStatus(deliveryStatusMessage(response.delivery, "EPUB generated."));
+      flashDeliveryToast(response.delivery, "EPUB");
     } catch (err) {
       setError(errorMessage(err));
       setStatus("");
@@ -351,6 +384,7 @@ function App() {
       });
       await loadDeliveries();
       setStatus(deliveryStatusMessage(response.delivery, "Sent to Kindle."));
+      flashDeliveryToast(response.delivery, "EPUB");
       setGeneratedFile({ ...generatedFile, sentToKindle: response.sent, delivery: response.delivery });
     } catch (err) {
       setError(errorMessage(err));
@@ -438,6 +472,7 @@ function App() {
       const response = await apiPost<{ delivery: KindleDelivery }>("/api/deliveries/latest", {});
       await loadDeliveries();
       setStatus(deliveryStatusMessage(response.delivery, "Latest EPUB sent to Kindle."));
+      flashDeliveryToast(response.delivery, "Latest EPUB");
     } catch (err) {
       setStatus("");
       setError(errorMessage(err));
@@ -455,6 +490,7 @@ function App() {
       const response = await apiPost<{ delivery: KindleDelivery }>("/api/deliveries/test", {});
       await loadDeliveries();
       setStatus(deliveryStatusMessage(response.delivery, "Test EPUB sent to Kindle."));
+      flashDeliveryToast(response.delivery, "Test EPUB");
     } catch (err) {
       setStatus("");
       setError(errorMessage(err));
@@ -472,6 +508,7 @@ function App() {
       const response = await apiPost<{ delivery: KindleDelivery }>(`/api/deliveries/${deliveryId}/retry`, {});
       await loadDeliveries();
       setStatus(deliveryStatusMessage(response.delivery, "Delivery retry sent to Kindle."));
+      flashDeliveryToast(response.delivery, "Retry");
     } catch (err) {
       setStatus("");
       setError(errorMessage(err));
@@ -830,6 +867,12 @@ function App() {
           </section>
         </>
       )}
+
+      {toast ? (
+        <div className={`toast toast-${toast.kind}`} role="status" aria-live="polite" key={toast.id}>
+          {toast.message}
+        </div>
+      ) : null}
     </main>
   );
 }
