@@ -34,10 +34,21 @@ interface ArticleFetchResult {
   article: ExtractedArticle;
 }
 
+interface PdfAnalysis {
+  verdict:
+    | "good-epub-candidate"
+    | "mixed-conversion-quality"
+    | "better-as-pdf"
+    | "not-convertible"
+    | "analysis-unavailable";
+  reasons: string[];
+}
+
 interface PdfFetchResult {
   kind: "pdf";
   sourceUrl: string;
   title: string;
+  analysis: PdfAnalysis;
   generated: {
     filename: string;
     mimeType: "application/pdf";
@@ -103,6 +114,7 @@ function App() {
   const [subscriptionUrl, setSubscriptionUrl] = React.useState("");
   const [result, setResult] = React.useState<FetchResult | null>(null);
   const [generatedFile, setGeneratedFile] = React.useState<GeneratedFile | null>(null);
+  const [pdfAnalysis, setPdfAnalysis] = React.useState<PdfAnalysis | null>(null);
   const [pendingExtensionImport, setPendingExtensionImport] = React.useState<ExtensionImportPayload | null>(null);
   const [status, setStatus] = React.useState("");
   const [error, setError] = React.useState("");
@@ -158,6 +170,21 @@ function App() {
 
   function getFileTypeLabel(mimeType: "application/epub+zip" | "application/pdf"): string {
     return mimeType === "application/pdf" ? "PDF" : "EPUB";
+  }
+
+  function getVerdictLabel(verdict: PdfAnalysis["verdict"]): string {
+    switch (verdict) {
+      case "good-epub-candidate":
+        return "Good EPUB candidate";
+      case "mixed-conversion-quality":
+        return "Mixed conversion quality";
+      case "better-as-pdf":
+        return "Better as PDF";
+      case "not-convertible":
+        return "Not convertible";
+      case "analysis-unavailable":
+        return "Analysis unavailable";
+    }
   }
 
   React.useEffect(() => {
@@ -313,6 +340,7 @@ function App() {
       const response = await apiPost<FetchResult>("/api/articles/fetch", { url });
       if (response.kind === "pdf") {
         setResult(null);
+        setPdfAnalysis(response.analysis);
         setGeneratedFile({
           filename: response.generated.filename,
           mimeType: response.generated.mimeType,
@@ -325,6 +353,7 @@ function App() {
         flashDeliveryToast(response.generated.delivery, "PDF");
       } else {
         setResult(response);
+        setPdfAnalysis(null);
         setStatus("Article extracted. Review the preview, then generate your Kindle file.");
       }
     } catch (err) {
@@ -811,6 +840,20 @@ function App() {
               </div>
 
               <article className="article-body" dangerouslySetInnerHTML={{ __html: result.article.contentHtml }} />
+            </section>
+          ) : null}
+
+          {pdfAnalysis ? (
+            <section className="card pdf-analysis">
+              <div>
+                <p className="eyebrow">PDF Analysis</p>
+                <h3>{getVerdictLabel(pdfAnalysis.verdict)}</h3>
+                <ul className="analysis-reasons">
+                  {pdfAnalysis.reasons.map((reason, index) => (
+                    <li key={index}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
             </section>
           ) : null}
 

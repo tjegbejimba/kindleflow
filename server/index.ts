@@ -174,6 +174,7 @@ app.post("/api/articles/fetch", async (request) => {
       kind: "pdf" as const,
       sourceUrl: fetched.sourceUrl,
       title: fetched.title,
+      analysis: fetched.analysis,
       generated: {
         filename: generated.filename,
         mimeType: generated.mimeType,
