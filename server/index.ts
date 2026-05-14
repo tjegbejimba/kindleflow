@@ -339,20 +339,21 @@ app.post("/api/articles/convert-pdf", async (request) => {
     dataDir: config.dataDir
   });
 
-  // Add converted EPUB to library as a new item
-  const epubLibraryItem = store.addLibraryItem(user.id, {
-    type: "article",
-    title: `${libraryItem.title} (Converted)`,
-    sourceUrl: libraryItem.sourceUrl,
+  // Track converted EPUB as a temporary file with 24-hour retention
+  const tempFile = store.addTemporaryFile({
+    userId: user.id,
+    sourceLibraryItemId: libraryItem.id,
     filename: generated.filename,
-    mimeType: generated.mimeType
+    mimeType: generated.mimeType,
+    retentionHours: 24
   });
 
   return {
     filename: generated.filename,
     mimeType: generated.mimeType,
     downloadUrl: `/files/${encodeURIComponent(generated.filename)}`,
-    libraryItemId: epubLibraryItem.id,
+    tempFileId: tempFile.id,
+    expiresAt: tempFile.expiresAt,
     verdict: analysis.verdict
   };
 });
