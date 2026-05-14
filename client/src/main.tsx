@@ -56,6 +56,7 @@ interface ExtensionImportPayload {
 
 interface GeneratedFile {
   filename: string;
+  mimeType: "application/epub+zip" | "application/pdf";
   downloadUrl: string;
   sentToKindle: boolean;
   delivery?: KindleDelivery;
@@ -152,6 +153,12 @@ function App() {
     | "logout"
     | null
   >(null);
+
+  const isBusy = busyAction !== null;
+
+  function getFileTypeLabel(mimeType: "application/epub+zip" | "application/pdf"): string {
+    return mimeType === "application/pdf" ? "PDF" : "EPUB";
+  }
 
   React.useEffect(() => {
     Promise.all([apiGet<AppConfig>("/api/config"), apiGet<{ user: UserProfile | null }>("/api/me")])
@@ -308,6 +315,7 @@ function App() {
         setResult(null);
         setGeneratedFile({
           filename: response.generated.filename,
+          mimeType: response.generated.mimeType,
           downloadUrl: response.generated.downloadUrl,
           sentToKindle: response.generated.sentToKindle,
           delivery: response.generated.delivery
@@ -516,8 +524,6 @@ function App() {
       setBusyAction(null);
     }
   }
-
-  const isBusy = busyAction !== null;
 
   return (
     <main className="shell">
@@ -811,12 +817,12 @@ function App() {
           {generatedFile ? (
             <section className="card actions">
               <div>
-                <h2>Your EPUB is ready</h2>
+                <h2>Your {getFileTypeLabel(generatedFile.mimeType)} is ready</h2>
                 <p>{generatedFile.filename}</p>
               </div>
               <div className="action-buttons">
                 <a className="button" href={generatedFile.downloadUrl}>
-                  Download EPUB
+                  Download {getFileTypeLabel(generatedFile.mimeType)}
                 </a>
                 {config?.emailDeliveryEnabled && user.kindleEmail && !generatedFile.sentToKindle ? (
                   <button type="button" onClick={sendToKindle} disabled={isBusy}>
