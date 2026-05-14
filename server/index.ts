@@ -2,7 +2,7 @@ import fastifyCookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { createReadStream } from "node:fs";
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AuthStore, type KindleDelivery, type LibraryItem, type UserProfile } from "./authStore.js";
@@ -280,6 +280,81 @@ app.post("/api/articles/send", async (request) => {
 
   const delivery = await sendKindleDelivery(user, libraryItem, "manual");
   return { sent: delivery.status === "sent", delivery };
+});
+
+app.post("/api/articles/convert-pdf", async (request) => {
+  const user = requireUser(request);
+
+  const body = request.body as { filename?: unknown; forceConvert?: unknown };
+  if (typeof body.filename !== "string") {
+    throw new Error("PDF filename is required.");
+  }
+
+  const safeFilename = path.basename(body.filename);
+  if (safeFilename !== body.filename || !isAllowedKindleFilename(safeFilename)) {
+    const error = new Error("Invalid file name.");
+    Object.assign(error, { statusCode: 400 });
+    throw error;
+  }
+
+  // Look up the library item
+  const libraryItem = store.getLibraryItemForUserByFilename(user.id, safeFilename);
+  if (!libraryItem) {
+    const error = new Error("PDF file is not in your library.");
+    Object.assign(error, { statusCode: 404 });
+    throw error;
+  }
+
+  // Verify it's actually a PDF
+  if (libraryItem.mimeType !== "application/pdf") {
+    const error = new Error("This file is not a PDF.");
+    Object.assign(error, { statusCode: 400 });
+    throw error;
+  }
+
+  // Read the PDF from disk
+  const pdfPath = path.join(config.dataDir, safeFilename);
+  const pdfBuffer = await readFile(pdfPath);
+
+  // Re-analyze to get the verdict
+  const { analyzePdf } = await import("./pdfAnalyzer.js");
+  const analysis = await analyzePdf(pdfBuffer);
+
+  // Check if conversion is allowed based on verdict
+  const forceConvert = body.forceConvert === true;
+  const isGoodOrMixed = analysis.verdict === "good-epub-candidate" || analysis.verdict === "mixed-conversion-quality";
+  
+  if (!isGoodOrMixed && !forceConvert) {
+    const error = new Error("This PDF is not recommended for EPUB conversion. Set forceConvert=true to convert anyway.");
+    Object.assign(error, { statusCode: 400, verdict: analysis.verdict, reasons: analysis.reasons });
+    throw error;
+  }
+
+  // Perform the conversion
+  const { convertPdfToEpub } = await import("./pdfConverter.js");
+  const generated = await convertPdfToEpub({
+    pdfBuffer,
+    title: libraryItem.title,
+    sourceUrl: libraryItem.sourceUrl,
+    dataDir: config.dataDir
+  });
+
+  // Add converted EPUB to library as a new item
+  const epubLibraryItem = store.addLibraryItem(user.id, {
+    type: "article",
+    title: `${libraryItem.title} (Converted)`,
+    sourceUrl: libraryItem.sourceUrl,
+    filename: generated.filename,
+    mimeType: generated.mimeType
+  });
+
+  return {
+    filename: generated.filename,
+    mimeType: generated.mimeType,
+    downloadUrl: `/files/${encodeURIComponent(generated.filename)}`,
+    libraryItemId: epubLibraryItem.id,
+    verdict: analysis.verdict
+  };
 });
 
 app.get("/api/deliveries", async (request) => {
