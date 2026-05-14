@@ -320,6 +320,7 @@ function App() {
       setDeliveries([]);
       setResult(null);
       setGeneratedFile(null);
+      setPdfAnalysis(null);
       setOpdsUrl("");
       setStatus("Signed out.");
     } catch (err) {
@@ -358,6 +359,7 @@ function App() {
       }
     } catch (err) {
       setResult(null);
+      setPdfAnalysis(null);
       setStatus("");
       setError(errorMessage(err));
     } finally {
