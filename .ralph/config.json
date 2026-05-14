@@ -79,5 +79,6 @@
         "\\bgit (commit|push)\\b"
       ]
     }
-  ]
+  ],
+  "repo": "tjegbejimba/kindleflow"
 }
