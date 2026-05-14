@@ -118,6 +118,9 @@ async function timeoutFallback(ms: number): Promise<PdfAnalysis> {
  * Determines if a PDF should auto-send based on analysis verdict.
  * Good and mixed EPUB candidates should pause for user choice.
  * All others (better-as-pdf, not-convertible, analysis-unavailable) continue with auto-send.
+ * 
+ * Note: This check applies to manual PDF fetches only. Subscription PDFs bypass this
+ * check and always auto-send to maintain predictable unattended delivery.
  */
 export function shouldAutoSendPdf(verdict: PdfAnalysisVerdict): boolean {
   // Good and mixed candidates should pause for user choice

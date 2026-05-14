@@ -1,21 +1,20 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { describe, it, expect } from "vitest";
 import type { PdfAnalysisVerdict } from "../server/pdfAnalyzer.js";
 import { shouldAutoSendPdf } from "../server/pdfAnalyzer.js";
 
-// Test auto-send pause behavior for PDFs based on analysis verdict
-
+/**
+ * Tests auto-send pause decision logic for PDFs based on analysis verdict.
+ * 
+ * These are unit tests of the shouldAutoSendPdf() helper function that encodes
+ * the business logic. The function is called by the /api/articles/fetch route
+ * at server/index.ts:171 to decide whether to proceed with auto-send.
+ * 
+ * Note: Full route-level integration tests would require Fastify test infrastructure
+ * that doesn't exist in this codebase yet. These unit tests verify the decision
+ * logic is correct; the route integration is verified through type safety and
+ * manual testing.
+ */
 describe("PDF auto-send pause on analysis verdict", () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
-  
-  beforeEach(() => {
-    mockFetch = vi.fn();
-    vi.stubGlobal("fetch", mockFetch);
-  });
-  
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
 
   it("continues auto-send for better-as-pdf verdict when auto-send enabled", async () => {
     // This is the tracer bullet - tests that current safe behavior is preserved
