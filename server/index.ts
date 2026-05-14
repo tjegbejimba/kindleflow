@@ -15,6 +15,7 @@ import { generateKindleFile, saveKindlePdf } from "./kindleFile.js";
 import { sendFileToKindle, sendLoginCode } from "./mailer.js";
 import { renderOpdsAcquisitionFeed, renderOpdsNavigationFeed } from "./opds.js";
 import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionPoller.js";
+import { shouldAutoSendPdf } from "./pdfAnalyzer.js";
 
 const config = loadConfig();
 const app = Fastify({ logger: true });
@@ -165,8 +166,11 @@ app.post("/api/articles/fetch", async (request) => {
       filename: generated.filename,
       mimeType: generated.mimeType
     });
+    
+    // Check if auto-send should proceed based on analysis verdict
+    const shouldAutoSend = shouldAutoSendPdf(fetched.analysis.verdict);
     const delivery =
-      config.smtp && user.kindleEmail && user.autoSendToKindle
+      config.smtp && user.kindleEmail && user.autoSendToKindle && shouldAutoSend
         ? await sendKindleDelivery(user, libraryItem, "auto")
         : undefined;
 
