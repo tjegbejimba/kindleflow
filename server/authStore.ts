@@ -35,6 +35,24 @@ export interface LibraryItemInput {
   mimeType: LibraryItemMimeType;
 }
 
+export interface TemporaryFile {
+  id: string;
+  userId: string;
+  sourceLibraryItemId: string;
+  filename: string;
+  mimeType: LibraryItemMimeType;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface TemporaryFileInput {
+  userId: string;
+  sourceLibraryItemId: string;
+  filename: string;
+  mimeType: LibraryItemMimeType;
+  retentionHours: number;
+}
+
 export interface KindleDelivery {
   id: string;
   userId: string;
@@ -459,6 +477,92 @@ export class AuthStore {
       .all(userId) as unknown as LibrarySubscription[];
   }
 
+  addTemporaryFile(input: TemporaryFileInput): TemporaryFile {
+    const id = randomUUID();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + input.retentionHours * 60 * 60 * 1000);
+    
+    this.db
+      .prepare(
+        `INSERT INTO temporary_files
+           (id, user_id, source_library_item_id, filename, mime_type, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        input.userId,
+        input.sourceLibraryItemId,
+        input.filename,
+        input.mimeType,
+        now.toISOString(),
+        expiresAt.toISOString()
+      );
+    
+    return this.getTemporaryFile(id)!;
+  }
+
+  listTemporaryFiles(userId: string): TemporaryFile[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM temporary_files WHERE user_id = ? ORDER BY created_at DESC")
+        .all(userId) as unknown as DbTemporaryFile[]
+    ).map(toTemporaryFile);
+  }
+
+  listExpiredTemporaryFiles(): TemporaryFile[] {
+    const now = new Date().toISOString();
+    return (
+      this.db
+        .prepare("SELECT * FROM temporary_files WHERE expires_at <= ?")
+        .all(now) as unknown as DbTemporaryFile[]
+    ).map(toTemporaryFile);
+  }
+
+  cleanupExpiredTemporaryFiles(): number {
+    const now = new Date().toISOString();
+    // Get expired files before deleting them
+    const expiredFiles = (
+      this.db
+        .prepare("SELECT * FROM temporary_files WHERE expires_at <= ?")
+        .all(now) as unknown as DbTemporaryFile[]
+    ).map(toTemporaryFile);
+    
+    // Delete from database
+    const result = this.db
+      .prepare("DELETE FROM temporary_files WHERE expires_at <= ?")
+      .run(now);
+    
+    return Number(result.changes);
+  }
+
+  getTemporaryFileByFilename(userId: string, filename: string): TemporaryFile | null {
+    const row = this.db
+      .prepare("SELECT * FROM temporary_files WHERE user_id = ? AND filename = ?")
+      .get(userId, filename) as DbTemporaryFile | undefined;
+    return row ? toTemporaryFile(row) : null;
+  }
+
+  deleteTemporaryFile(userId: string, filename: string): boolean {
+    const result = this.db
+      .prepare("DELETE FROM temporary_files WHERE user_id = ? AND filename = ?")
+      .run(userId, filename);
+    return result.changes > 0;
+  }
+
+  getLibraryItem(id: string): LibraryItem | null {
+    const row = this.db
+      .prepare("SELECT * FROM library_items WHERE id = ?")
+      .get(id) as DbLibraryItem | undefined;
+    return row ? toLibraryItem(row) : null;
+  }
+
+  private getTemporaryFile(id: string): TemporaryFile | null {
+    const row = this.db
+      .prepare("SELECT * FROM temporary_files WHERE id = ?")
+      .get(id) as DbTemporaryFile | undefined;
+    return row ? toTemporaryFile(row) : null;
+  }
+
   getLibraryItemForOpdsToken(token: string, filename: string): LibraryItem | null {
     const user = this.getUserByOpdsToken(token);
     if (!user) {
@@ -580,11 +684,6 @@ export class AuthStore {
     return row ? toSubscription(row) : null;
   }
 
-  private getLibraryItem(id: string): LibraryItem | null {
-    const row = this.db.prepare("SELECT * FROM library_items WHERE id = ?").get(id) as DbLibraryItem | undefined;
-    return row ? toLibraryItem(row) : null;
-  }
-
   private findUserByEmail(email: string): { id: string } | null {
     const row = this.db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string } | undefined;
     return row ?? null;
@@ -682,11 +781,23 @@ export class AuthStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS temporary_files (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_library_item_id TEXT NOT NULL REFERENCES library_items(id) ON DELETE CASCADE,
+        filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
     `);
     this.addColumnIfMissing("users", "subscription_retention_days", "INTEGER NOT NULL DEFAULT 30");
     this.addColumnIfMissing("users", "opds_token", "TEXT");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_opds_token ON users(opds_token)");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_kindle_deliveries_user_updated ON kindle_deliveries(user_id, updated_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_temporary_files_expires_at ON temporary_files(expires_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_temporary_files_user_filename ON temporary_files(user_id, filename)");
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
@@ -741,6 +852,16 @@ interface DbKindleDelivery {
   error?: string;
   created_at: string;
   updated_at: string;
+}
+
+interface DbTemporaryFile {
+  id: string;
+  user_id: string;
+  source_library_item_id: string;
+  filename: string;
+  mime_type: LibraryItemMimeType;
+  created_at: string;
+  expires_at: string;
 }
 
 function randomToken(): string {
@@ -849,5 +970,17 @@ function toKindleDelivery(row: DbKindleDelivery): KindleDelivery {
     error: row.error || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function toTemporaryFile(row: DbTemporaryFile): TemporaryFile {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    sourceLibraryItemId: row.source_library_item_id,
+    filename: row.filename,
+    mimeType: row.mime_type,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at
   };
 }

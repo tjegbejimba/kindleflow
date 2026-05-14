@@ -271,15 +271,23 @@ app.post("/api/articles/send", async (request) => {
     throw error;
   }
 
+  // Check library items first, then temporary files
   const libraryItem = store.getLibraryItemForUserByFilename(user.id, safeFilename);
-  if (!libraryItem) {
-    const error = new Error("Generated file is not in your library yet.");
-    Object.assign(error, { statusCode: 404 });
-    throw error;
+  if (libraryItem) {
+    const delivery = await sendKindleDelivery(user, libraryItem, "manual");
+    return { sent: delivery.status === "sent", delivery };
   }
 
-  const delivery = await sendKindleDelivery(user, libraryItem, "manual");
-  return { sent: delivery.status === "sent", delivery };
+  // Check temporary files
+  const tempFile = store.getTemporaryFileByFilename(user.id, safeFilename);
+  if (tempFile) {
+    const delivery = await sendTemporaryFileToKindle(user, tempFile, "manual");
+    return { sent: delivery.status === "sent", delivery };
+  }
+
+  const error = new Error("Generated file is not in your library yet.");
+  Object.assign(error, { statusCode: 404 });
+  throw error;
 });
 
 app.post("/api/articles/convert-pdf", async (request) => {
@@ -339,20 +347,21 @@ app.post("/api/articles/convert-pdf", async (request) => {
     dataDir: config.dataDir
   });
 
-  // Add converted EPUB to library as a new item
-  const epubLibraryItem = store.addLibraryItem(user.id, {
-    type: "article",
-    title: `${libraryItem.title} (Converted)`,
-    sourceUrl: libraryItem.sourceUrl,
+  // Track converted EPUB as a temporary file with 24-hour retention
+  const tempFile = store.addTemporaryFile({
+    userId: user.id,
+    sourceLibraryItemId: libraryItem.id,
     filename: generated.filename,
-    mimeType: generated.mimeType
+    mimeType: generated.mimeType,
+    retentionHours: 24
   });
 
   return {
     filename: generated.filename,
     mimeType: generated.mimeType,
     downloadUrl: `/files/${encodeURIComponent(generated.filename)}`,
-    libraryItemId: epubLibraryItem.id,
+    tempFileId: tempFile.id,
+    expiresAt: tempFile.expiresAt,
     verdict: analysis.verdict
   };
 });
@@ -623,6 +632,27 @@ async function sendKindleDelivery(
     libraryItemId: libraryItem.id,
     title: libraryItem.title,
     filename: libraryItem.filename,
+    kindleEmail: deliveryConfig.kindleEmail,
+    trigger
+  });
+
+  return finishKindleDelivery(delivery, deliveryConfig.smtp);
+}
+
+async function sendTemporaryFileToKindle(
+  user: UserProfile,
+  tempFile: import("./authStore.js").TemporaryFile,
+  trigger: "auto" | "manual" | "subscription" | "test"
+): Promise<KindleDelivery> {
+  const deliveryConfig = getKindleDeliveryConfig(user);
+  // Get the source library item to retrieve title
+  const sourceItem = store.getLibraryItem(tempFile.sourceLibraryItemId);
+  const title = sourceItem ? `${sourceItem.title} (Converted)` : "Converted Document";
+  
+  const delivery = store.createKindleDelivery(user.id, {
+    libraryItemId: tempFile.sourceLibraryItemId, // Link back to source PDF
+    title,
+    filename: tempFile.filename,
     kindleEmail: deliveryConfig.kindleEmail,
     trigger
   });
