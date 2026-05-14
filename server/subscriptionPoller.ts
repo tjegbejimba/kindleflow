@@ -44,7 +44,38 @@ export async function pollSubscriptions(
     await deleteGeneratedFiles(config.dataDir, store.pruneDeliveredPostsForUser(currentUserId), logger);
   }
 
+  // Clean up expired temporary files
+  await cleanupExpiredTemporaryFiles(store, config.dataDir, logger);
+
   return { checked: subscriptions.length, delivered };
+}
+
+async function cleanupExpiredTemporaryFiles(
+  store: AuthStore,
+  dataDir: string,
+  logger: Pick<FastifyBaseLogger, "info" | "warn" | "error">
+): Promise<void> {
+  const expiredFiles = store.listExpiredTemporaryFiles();
+  
+  if (expiredFiles.length === 0) {
+    return;
+  }
+  
+  logger.info({ count: expiredFiles.length }, "cleaning up expired temporary files");
+  
+  // Delete physical files
+  for (const file of expiredFiles) {
+    const filePath = path.join(dataDir, file.filename);
+    try {
+      await unlink(filePath);
+    } catch (error) {
+      logger.warn({ filename: file.filename, err: error }, "failed to delete temporary file from disk");
+    }
+  }
+  
+  // Delete database records
+  const deletedCount = store.cleanupExpiredTemporaryFiles();
+  logger.info({ count: deletedCount }, "cleaned up expired temporary files from database");
 }
 
 async function pollSubscription(

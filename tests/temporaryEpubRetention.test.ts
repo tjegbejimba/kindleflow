@@ -236,13 +236,16 @@ A third paragraph adds even more content to thoroughly test the system.`.trim();
       const beforeCleanup = store.listTemporaryFiles(userId);
       expect(beforeCleanup).toHaveLength(1);
       
-      // Run cleanup
+      // Run cleanup (database only)
       const cleanedCount = store.cleanupExpiredTemporaryFiles();
       
       // Verify expired file was removed from database
       const afterCleanup = store.listTemporaryFiles(userId);
       expect(afterCleanup).toHaveLength(0);
       expect(cleanedCount).toBe(1);
+      
+      // Note: Physical file deletion is tested separately in integration tests
+      // since it requires filesystem mocking or actual file system interaction
     });
     
     it("preserves non-expired temporary files during cleanup", async () => {

@@ -509,12 +509,51 @@ export class AuthStore {
     ).map(toTemporaryFile);
   }
 
+  listExpiredTemporaryFiles(): TemporaryFile[] {
+    const now = new Date().toISOString();
+    return (
+      this.db
+        .prepare("SELECT * FROM temporary_files WHERE expires_at <= ?")
+        .all(now) as unknown as DbTemporaryFile[]
+    ).map(toTemporaryFile);
+  }
+
   cleanupExpiredTemporaryFiles(): number {
     const now = new Date().toISOString();
+    // Get expired files before deleting them
+    const expiredFiles = (
+      this.db
+        .prepare("SELECT * FROM temporary_files WHERE expires_at <= ?")
+        .all(now) as unknown as DbTemporaryFile[]
+    ).map(toTemporaryFile);
+    
+    // Delete from database
     const result = this.db
       .prepare("DELETE FROM temporary_files WHERE expires_at <= ?")
       .run(now);
+    
     return result.changes;
+  }
+
+  getTemporaryFileByFilename(userId: string, filename: string): TemporaryFile | null {
+    const row = this.db
+      .prepare("SELECT * FROM temporary_files WHERE user_id = ? AND filename = ?")
+      .get(userId, filename) as DbTemporaryFile | undefined;
+    return row ? toTemporaryFile(row) : null;
+  }
+
+  deleteTemporaryFile(userId: string, filename: string): boolean {
+    const result = this.db
+      .prepare("DELETE FROM temporary_files WHERE user_id = ? AND filename = ?")
+      .run(userId, filename);
+    return result.changes > 0;
+  }
+
+  getLibraryItem(id: string): LibraryItem | null {
+    const row = this.db
+      .prepare("SELECT * FROM library_items WHERE id = ?")
+      .get(id) as DbLibraryItem | undefined;
+    return row ? toLibraryItem(row) : null;
   }
 
   private getTemporaryFile(id: string): TemporaryFile | null {
@@ -755,14 +794,15 @@ export class AuthStore {
         filename TEXT NOT NULL,
         mime_type TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        UNIQUE(user_id, filename)
+        expires_at TEXT NOT NULL
       );
     `);
     this.addColumnIfMissing("users", "subscription_retention_days", "INTEGER NOT NULL DEFAULT 30");
     this.addColumnIfMissing("users", "opds_token", "TEXT");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_opds_token ON users(opds_token)");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_kindle_deliveries_user_updated ON kindle_deliveries(user_id, updated_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_temporary_files_expires_at ON temporary_files(expires_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_temporary_files_user_filename ON temporary_files(user_id, filename)");
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
