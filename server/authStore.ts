@@ -532,7 +532,7 @@ export class AuthStore {
       .prepare("DELETE FROM temporary_files WHERE expires_at <= ?")
       .run(now);
     
-    return result.changes;
+    return Number(result.changes);
   }
 
   getTemporaryFileByFilename(userId: string, filename: string): TemporaryFile | null {
@@ -682,11 +682,6 @@ export class AuthStore {
   private getSubscription(id: string): SubscriptionRecord | null {
     const row = this.db.prepare("SELECT * FROM subscriptions WHERE id = ?").get(id) as DbSubscription | undefined;
     return row ? toSubscription(row) : null;
-  }
-
-  private getLibraryItem(id: string): LibraryItem | null {
-    const row = this.db.prepare("SELECT * FROM library_items WHERE id = ?").get(id) as DbLibraryItem | undefined;
-    return row ? toLibraryItem(row) : null;
   }
 
   private findUserByEmail(email: string): { id: string } | null {
