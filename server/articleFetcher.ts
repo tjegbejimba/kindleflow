@@ -1,6 +1,7 @@
 import { extractArticleFromHtml, type ExtractedArticle } from "./articleExtraction.js";
 import { cookieHeaderForUrl, type SubstackAuthConfig } from "./substackAuth.js";
 import { validateFetchUrl } from "./urlValidation.js";
+import { analyzePdf, type PdfAnalysis } from "./pdfAnalyzer.js";
 
 export interface FetchedArticleResult {
   kind: "article";
@@ -13,6 +14,7 @@ export interface FetchedPdfResult {
   sourceUrl: string;
   title: string;
   pdfBuffer: Buffer;
+  analysis: PdfAnalysis;
 }
 
 export type FetchArticleResult = FetchedArticleResult | FetchedPdfResult;
@@ -65,11 +67,14 @@ export async function fetchAndExtractArticle(rawUrl: string, options: FetchArtic
         throw new Error("The URL did not return a valid PDF document.");
       }
 
+      const analysis = await analyzePdf(pdfBuffer);
+
       return {
         kind: "pdf",
         sourceUrl: currentUrl.toString(),
         title: derivePdfTitle(currentUrl, dispositionFilename),
-        pdfBuffer
+        pdfBuffer,
+        analysis
       };
     }
 
