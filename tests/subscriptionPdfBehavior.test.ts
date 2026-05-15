@@ -194,6 +194,18 @@ describe("Subscription PDF behavior under the conversion model", () => {
   it("delivers a good-EPUB-candidate subscription PDF as a covered PDF (no pause, no conversion)", async () => {
     harness = await setupHarness();
     const pdfBuffer = await buildTextHeavyPdf();
+
+    // Premise check: this PDF must be one that WOULD pause auto-send if it
+    // arrived via the manual-fetch path. If a future analyzer change flips
+    // this premise (e.g. hardens the text heuristic, changes the default
+    // verdict, or times out to analysis-unavailable), the no-pause
+    // assertion below would degrade into a tautology — fail loudly here
+    // instead so the test stops silently rubber-stamping a regression.
+    const { analyzePdf, shouldAutoSendPdf } = await import("../server/pdfAnalyzer.js");
+    const premise = await analyzePdf(pdfBuffer);
+    expect(premise.verdict).toBe("good-epub-candidate");
+    expect(shouldAutoSendPdf(premise.verdict)).toBe(false);
+
     vi.stubGlobal("fetch", makeFetchStub(pdfBuffer));
 
     const { pollSubscriptions } = await import("../server/subscriptionPoller.js");
