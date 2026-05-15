@@ -102,6 +102,10 @@ async function pollSubscription(
     }
 
     const fetched = await fetchAndExtractArticle(post.url, { substackAuth: config.substackAuth });
+    // Subscription PDFs are PDF-only in v1: unattended subscription delivery must not
+    // consult fetched.analysis.verdict or call convertPdfToEpub. Manual PDF fetches own
+    // the guided conversion flow (analyzer pause + opt-in converter); subscriptions
+    // stay predictable and always save+send as covered PDFs. See issue #10 and PRD #4.
     const generated =
       fetched.kind === "pdf"
         ? await saveKindlePdf({
