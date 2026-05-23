@@ -83,6 +83,28 @@ deletion set is exactly what you intend.
   Docker also runs this; if it fails locally it will fail on the NAS too.
 - `npm run dev:server` / `npm run dev:client` for local iteration.
 
+## CLI / MCP
+
+KindleFlow ships a CLI (`kindleflow`) and an MCP server (`kindleflow-mcp`)
+that wrap the HTTP API. They are **not** deployed to the NAS — they're
+intended to run on user machines (cron, scripts, Claude Desktop, etc.) against
+the existing NAS server.
+
+- Source: `cli/`, `mcp/`, `shared/`.
+- Build: `npm run build:cli` and `npm run build:mcp` produce
+  `dist/cli/cli/index.js` and `dist/mcp/mcp/server.js`.
+- Auth: bearer tokens minted in the web UI (Settings → API tokens). Stored
+  as SHA-256 hashes in the `api_tokens` SQLite table; plaintext is shown
+  once on creation only.
+- Bearer carve-out: `/api/tokens*` endpoints accept cookie sessions only,
+  not bearer tokens. Every other endpoint accepts both.
+- Server orchestration endpoint `POST /api/articles/send-url` is the single
+  call CLI/MCP make for `send` / `send_article`; it runs
+  fetch → generate → (send | skip) honouring `sendMode: "auto" | "force" |
+  "none"` so the client lib never has to re-implement the auto-send rules
+  in `/api/articles/fetch` and `/api/articles/generate`.
+- See `README.md` for full CLI/MCP usage and Claude Desktop config.
+
 ## Pre-merge checklist
 
 Before pushing to `main` (which is also production):

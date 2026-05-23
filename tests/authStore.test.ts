@@ -246,4 +246,116 @@ describe("AuthStore", () => {
     expect(store.pruneDeliveredPostsForUser(user.id)).toEqual(["old.epub"]);
     expect(store.listRecentLibraryItems(user.id)).toEqual([]);
   });
+
+  it("mints, lists, validates, and revokes API tokens", () => {
+    const session = store.consumeLoginCode(
+      "reader@example.com",
+      store.createLoginCode("reader@example.com", "secret", "secret")
+    );
+    const user = store.getUserBySession(session)!;
+
+    const minted = store.createApiToken(user.id, "Laptop CLI");
+    expect(minted.token).toMatch(/^kf_pat_[A-Za-z0-9_-]{40,}$/);
+    expect(minted.name).toBe("Laptop CLI");
+
+    expect(store.getUserByApiToken(minted.token)?.id).toBe(user.id);
+    expect(store.getUserByApiToken("kf_pat_bogus")).toBeNull();
+    expect(store.getUserByApiToken("sk-not-our-prefix")).toBeNull();
+    expect(store.getUserByApiToken(undefined)).toBeNull();
+
+    expect(store.listApiTokens(user.id).map((t) => t.name)).toEqual(["Laptop CLI"]);
+
+    store.touchApiToken(minted.token);
+    expect(store.listApiTokens(user.id)[0].lastUsedAt).toBeTruthy();
+
+    expect(store.revokeApiToken(user.id, minted.id)).toBe(true);
+    expect(store.revokeApiToken(user.id, minted.id)).toBe(false);
+    expect(store.getUserByApiToken(minted.token)).toBeNull();
+    expect(store.listApiTokens(user.id)).toEqual([]);
+
+    expect(() => store.createApiToken(user.id, "  ")).toThrow(/name is required/i);
+    expect(() => store.createApiToken(user.id, "x".repeat(200))).toThrow(/100 characters/i);
+  });
+
+  it("looks up library items by source URL for dedupe", () => {
+    const session = store.consumeLoginCode(
+      "reader@example.com",
+      store.createLoginCode("reader@example.com", "secret", "secret")
+    );
+    const user = store.getUserBySession(session)!;
+    store.addLibraryItem(user.id, {
+      type: "article",
+      title: "Saved",
+      sourceUrl: "https://example.com/post",
+      filename: "saved-post.epub",
+      mimeType: "application/epub+zip"
+    });
+
+    expect(store.getLibraryItemForUserBySourceUrl(user.id, "https://example.com/post")?.filename).toBe(
+      "saved-post.epub"
+    );
+    expect(store.getLibraryItemForUserBySourceUrl(user.id, "https://example.com/other")).toBeNull();
+  });
+
+  it("returns recent library items with their latest delivery", () => {
+    const session = store.consumeLoginCode(
+      "reader@example.com",
+      store.createLoginCode("reader@example.com", "secret", "secret")
+    );
+    const user = store.getUserBySession(session)!;
+    const item = store.addLibraryItem(user.id, {
+      type: "article",
+      title: "With Delivery",
+      sourceUrl: "https://example.com/a",
+      filename: "a.epub",
+      mimeType: "application/epub+zip"
+    });
+    store.addLibraryItem(user.id, {
+      type: "article",
+      title: "No Delivery",
+      sourceUrl: "https://example.com/b",
+      filename: "b.epub",
+      mimeType: "application/epub+zip"
+    });
+
+    const failed = store.createKindleDelivery(user.id, {
+      libraryItemId: item.id,
+      title: item.title,
+      filename: item.filename,
+      kindleEmail: "reader@kindle.com",
+      trigger: "manual"
+    });
+    store.recordKindleDeliveryResult(failed.id, { status: "failed", error: "smtp" });
+    const retry = store.createKindleDelivery(user.id, {
+      libraryItemId: item.id,
+      title: item.title,
+      filename: item.filename,
+      kindleEmail: "reader@kindle.com",
+      trigger: "retry"
+    });
+    store.recordKindleDeliveryResult(retry.id, { status: "sent", messageId: "m1" });
+
+    const recent = store.listRecentLibraryItemsWithDelivery(user.id);
+    expect(recent.map((r) => r.title)).toEqual(["No Delivery", "With Delivery"]);
+    expect(recent[0].latestDelivery).toBeNull();
+    expect(recent[1].latestDelivery?.status).toBe("sent");
+    expect(recent[1].latestDelivery?.id).toBe(retry.id);
+  });
+
+  it("api_tokens migration is idempotent on an existing DB", () => {
+    const session = store.consumeLoginCode(
+      "reader@example.com",
+      store.createLoginCode("reader@example.com", "secret", "secret")
+    );
+    const user = store.getUserBySession(session)!;
+    const minted = store.createApiToken(user.id, "first");
+    store.close();
+
+    // Reopen the same DB — migration must be idempotent.
+    store = new AuthStore(path.join(tempDir, "kindleflow.sqlite"));
+    expect(store.getUserByApiToken(minted.token)?.id).toBe(user.id);
+    const minted2 = store.createApiToken(user.id, "second");
+    expect(minted2.token).not.toBe(minted.token);
+    expect(store.listApiTokens(user.id).map((t) => t.name).sort()).toEqual(["first", "second"]);
+  });
 });
