@@ -96,6 +96,138 @@ interface KindleDelivery {
   updatedAt: string;
 }
 
+function ApiTokensCard(): React.JSX.Element {
+  interface TokenSummary {
+    id: string;
+    name: string;
+    createdAt: string;
+    lastUsedAt?: string;
+  }
+  const [tokens, setTokens] = React.useState<TokenSummary[]>([]);
+  const [newName, setNewName] = React.useState("");
+  const [justMinted, setJustMinted] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [loaded, setLoaded] = React.useState(false);
+
+  const load = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/tokens", { credentials: "include" });
+      if (!res.ok) throw new Error((await res.json()).message ?? `HTTP ${res.status}`);
+      const data = await res.json();
+      setTokens(data.tokens);
+      setLoaded(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void load();
+  }, [load]);
+
+  const create = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    setJustMinted(null);
+    try {
+      const res = await fetch("/api/tokens", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newName })
+      });
+      if (!res.ok) throw new Error((await res.json()).message ?? `HTTP ${res.status}`);
+      const data = await res.json();
+      setJustMinted(data.token.token as string);
+      setNewName("");
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const revoke = async (id: string) => {
+    if (!confirm("Revoke this token? Any CLI / MCP client using it will stop working immediately.")) return;
+    try {
+      const res = await fetch(`/api/tokens/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        credentials: "include"
+      });
+      if (!res.ok) throw new Error((await res.json()).message ?? `HTTP ${res.status}`);
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <section className="card">
+      <h2>API tokens</h2>
+      <p className="muted">
+        Personal tokens for the KindleFlow CLI and MCP server. Tokens grant your account full access except for
+        managing tokens themselves (you'll always need to come back here to mint or revoke).
+      </p>
+      <form onSubmit={create} style={{ display: "flex", gap: "0.5em", flexWrap: "wrap" }}>
+        <input
+          type="text"
+          placeholder="Token name (e.g. Laptop CLI)"
+          value={newName}
+          onChange={(event) => setNewName(event.target.value)}
+          required
+        />
+        <button type="submit">Mint token</button>
+      </form>
+      {justMinted ? (
+        <div className="sender-help" style={{ marginTop: "0.75em" }}>
+          <p>
+            <strong>Copy this now — it will not be shown again:</strong>
+          </p>
+          <code style={{ wordBreak: "break-all" }}>{justMinted}</code>
+          <div className="action-buttons">
+            <button type="button" className="secondary" onClick={() => navigator.clipboard.writeText(justMinted)}>
+              Copy token
+            </button>
+            <button type="button" className="secondary" onClick={() => setJustMinted(null)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {error ? <p className="muted" style={{ color: "var(--error, #c00)" }}>Error: {error}</p> : null}
+      {loaded && tokens.length === 0 ? <p className="muted">No tokens yet.</p> : null}
+      {tokens.length > 0 ? (
+        <ul style={{ listStyle: "none", padding: 0 }}>
+          {tokens.map((token) => (
+            <li
+              key={token.id}
+              style={{
+                display: "flex",
+                gap: "1em",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "0.5em 0",
+                borderBottom: "1px solid rgba(0,0,0,0.08)"
+              }}
+            >
+              <span>
+                <strong>{token.name}</strong>
+                <br />
+                <span className="muted" style={{ fontSize: "0.85em" }}>
+                  created {token.createdAt}
+                  {token.lastUsedAt ? ` · last used ${token.lastUsedAt}` : " · never used"}
+                </span>
+              </span>
+              <button type="button" className="secondary" onClick={() => revoke(token.id)}>
+                Revoke
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 function App() {
   const [config, setConfig] = React.useState<AppConfig | null>(null);
   const [authLoaded, setAuthLoaded] = React.useState(false);
@@ -746,6 +878,8 @@ function App() {
               not approved or the Kindle address is wrong.
             </p>
           </section>
+
+          <ApiTokensCard />
 
           <section className="card">
             <div className="preview-heading">

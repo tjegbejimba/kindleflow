@@ -107,6 +107,28 @@ export interface SubscriptionWithUser extends SubscriptionRecord {
   subscriptionRetentionDays: number;
 }
 
+export interface ApiTokenRecord {
+  id: string;
+  userId: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+export interface CreatedApiToken extends ApiTokenRecord {
+  token: string;
+}
+
+export interface RecentLibraryItem extends LibraryItem {
+  latestDelivery: {
+    id: string;
+    status: KindleDelivery["status"];
+    updatedAt: string;
+  } | null;
+}
+
+export const API_TOKEN_PREFIX = "kf_pat_";
+
 const LOGIN_CODE_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
@@ -363,6 +385,145 @@ export class AuthStore {
          VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
       )
       .run(randomUUID(), subscriptionId, post.url, post.guid ?? null, post.title, post.filename ?? null);
+  }
+
+  createApiToken(userId: string, name: string): CreatedApiToken {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new Error("Token name is required.");
+    }
+    if (trimmed.length > 100) {
+      throw new Error("Token name must be 100 characters or fewer.");
+    }
+    const id = randomUUID();
+    const token = `${API_TOKEN_PREFIX}${randomToken()}`;
+    this.db
+      .prepare(
+        "INSERT INTO api_tokens (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, datetime('now'))"
+      )
+      .run(id, userId, trimmed, hashToken(token));
+    const record = this.getApiTokenById(userId, id);
+    if (!record) {
+      throw new Error("Token creation failed.");
+    }
+    return { ...record, token };
+  }
+
+  listApiTokens(userId: string): ApiTokenRecord[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT id, user_id AS userId, name, created_at AS createdAt, last_used_at AS lastUsedAt
+           FROM api_tokens
+           WHERE user_id = ? AND revoked_at IS NULL
+           ORDER BY created_at DESC`
+        )
+        .all(userId) as unknown as ApiTokenRecord[]
+    );
+  }
+
+  revokeApiToken(userId: string, tokenId: string): boolean {
+    const result = this.db
+      .prepare(
+        "UPDATE api_tokens SET revoked_at = datetime('now') WHERE id = ? AND user_id = ? AND revoked_at IS NULL"
+      )
+      .run(tokenId, userId);
+    return result.changes > 0;
+  }
+
+  getUserByApiToken(token: string | undefined): UserProfile | null {
+    if (!token || !token.startsWith(API_TOKEN_PREFIX)) {
+      return null;
+    }
+    const row = this.db
+      .prepare(
+        `SELECT users.id, users.email, users.verified_at AS verifiedAt, users.kindle_email AS kindleEmail,
+                users.auto_send_to_kindle AS autoSendToKindle,
+                users.subscription_retention_days AS subscriptionRetentionDays
+         FROM api_tokens
+         JOIN users ON users.id = api_tokens.user_id
+         WHERE api_tokens.token_hash = ? AND api_tokens.revoked_at IS NULL`
+      )
+      .get(hashToken(token)) as
+      | {
+          id: string;
+          email: string;
+          verifiedAt?: string;
+          kindleEmail?: string;
+          autoSendToKindle: number;
+          subscriptionRetentionDays: number;
+        }
+      | undefined;
+    return row ? toUserProfile(row) : null;
+  }
+
+  touchApiToken(token: string): void {
+    if (!token || !token.startsWith(API_TOKEN_PREFIX)) {
+      return;
+    }
+    this.db
+      .prepare("UPDATE api_tokens SET last_used_at = datetime('now') WHERE token_hash = ? AND revoked_at IS NULL")
+      .run(hashToken(token));
+  }
+
+  private getApiTokenById(userId: string, id: string): ApiTokenRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, user_id AS userId, name, created_at AS createdAt, last_used_at AS lastUsedAt
+         FROM api_tokens WHERE id = ? AND user_id = ? AND revoked_at IS NULL`
+      )
+      .get(id, userId) as ApiTokenRecord | undefined;
+    return row ?? null;
+  }
+
+  getLibraryItemForUserBySourceUrl(userId: string, sourceUrl: string): LibraryItem | null {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM library_items WHERE user_id = ? AND source_url = ? ORDER BY created_at DESC, rowid DESC LIMIT 1"
+      )
+      .get(userId, sourceUrl) as DbLibraryItem | undefined;
+    return row ? toLibraryItem(row) : null;
+  }
+
+  listRecentLibraryItemsWithDelivery(userId: string, limit = 25): RecentLibraryItem[] {
+    const rows = this.db
+      .prepare(
+        `SELECT library_items.*,
+                latest_delivery.id AS delivery_id,
+                latest_delivery.status AS delivery_status,
+                latest_delivery.updated_at AS delivery_updated_at
+         FROM library_items
+         LEFT JOIN (
+           SELECT kindle_deliveries.*
+           FROM kindle_deliveries
+           JOIN (
+             SELECT library_item_id, MAX(rowid) AS max_rowid
+             FROM kindle_deliveries
+             WHERE user_id = ? AND library_item_id IS NOT NULL
+             GROUP BY library_item_id
+           ) latest ON latest.library_item_id = kindle_deliveries.library_item_id
+                  AND latest.max_rowid = kindle_deliveries.rowid
+         ) latest_delivery ON latest_delivery.library_item_id = library_items.id
+         WHERE library_items.user_id = ?
+         ORDER BY library_items.created_at DESC, library_items.rowid DESC
+         LIMIT ?`
+      )
+      .all(userId, userId, limit) as unknown as (DbLibraryItem & {
+        delivery_id?: string;
+        delivery_status?: KindleDelivery["status"];
+        delivery_updated_at?: string;
+      })[];
+
+    return rows.map((row) => ({
+      ...toLibraryItem(row),
+      latestDelivery: row.delivery_id
+        ? {
+            id: row.delivery_id,
+            status: row.delivery_status as KindleDelivery["status"],
+            updatedAt: row.delivery_updated_at as string
+          }
+        : null
+    }));
   }
 
   ensureOpdsToken(userId: string): string {
@@ -791,6 +952,16 @@ export class AuthStore {
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS api_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT,
+        revoked_at TEXT
+      );
     `);
     this.addColumnIfMissing("users", "subscription_retention_days", "INTEGER NOT NULL DEFAULT 30");
     this.addColumnIfMissing("users", "opds_token", "TEXT");
@@ -798,6 +969,11 @@ export class AuthStore {
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_kindle_deliveries_user_updated ON kindle_deliveries(user_id, updated_at)");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_temporary_files_expires_at ON temporary_files(expires_at)");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_temporary_files_user_filename ON temporary_files(user_id, filename)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_library_items_user_source_url ON library_items(user_id, source_url)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id) WHERE revoked_at IS NULL");
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_kindle_deliveries_item_updated ON kindle_deliveries(library_item_id, updated_at)"
+    );
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {

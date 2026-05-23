@@ -5,6 +5,9 @@ import { createReadStream } from "node:fs";
 import { access, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { registerApiTokenRoutes } from "./apiTokenRoutes.js";
+import { registerSendUrlRoute } from "./articleSendUrl.js";
+import { createAuthHelpers } from "./auth.js";
 import { AuthStore, type KindleDelivery, type LibraryItem, type UserProfile } from "./authStore.js";
 import { importRenderedArticle } from "./articleImport.js";
 import { fetchAndExtractArticle } from "./articleFetcher.js";
@@ -12,6 +15,7 @@ import { isEmailDeliveryEnabled, loadConfig, type SmtpConfig } from "./config.js
 import { fetchFeed } from "./feed.js";
 import { FileInviteCodes } from "./inviteCodes.js";
 import { generateKindleFile, saveKindlePdf } from "./kindleFile.js";
+import { registerLibraryRecentRoute } from "./libraryRecentRoute.js";
 import { sendFileToKindle, sendLoginCode } from "./mailer.js";
 import { renderOpdsAcquisitionFeed, renderOpdsNavigationFeed } from "./opds.js";
 import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionPoller.js";
@@ -25,6 +29,7 @@ const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const clientDist = path.join(projectRoot, "client", "dist");
 const SESSION_COOKIE = "kf_session";
 const MAX_IMPORTED_HTML_BYTES = 5 * 1024 * 1024;
+const auth = createAuthHelpers(store, SESSION_COOKIE);
 
 await mkdir(config.dataDir, { recursive: true });
 
@@ -582,20 +587,30 @@ app.get("/opds/:token/files/:filename", async (request, reply) => {
 
 startDailySubscriptionPoller(store, config, app.log);
 
+registerApiTokenRoutes(app, store, auth);
+registerLibraryRecentRoute(app, store, auth);
+registerSendUrlRoute(
+  app,
+  {
+    store,
+    config,
+    log: app.log,
+    fetchAndExtractArticle,
+    generateKindleFile,
+    saveKindlePdf,
+    sendFileToKindle
+  },
+  auth
+);
+
 await app.listen({ host: config.host, port: config.port });
 
 function getCurrentUser(request: FastifyRequest): UserProfile | null {
-  return store.getUserBySession(request.cookies[SESSION_COOKIE]);
+  return auth.getCurrentUser(request);
 }
 
 function requireUser(request: FastifyRequest): UserProfile {
-  const user = getCurrentUser(request);
-  if (!user) {
-    const error = new Error("Please sign in to continue.");
-    Object.assign(error, { statusCode: 401 });
-    throw error;
-  }
-  return user;
+  return auth.requireUser(request);
 }
 
 function requireOpdsUser(token: string): UserProfile {

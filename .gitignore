@@ -1,8 +1,8 @@
 node_modules/
 client/dist/
-dist/extensions/
+dist/
+.env
 data/
 tailscale/state/
-.env
 .DS_Store
 npm-debug.log*

@@ -17,7 +17,92 @@ Self-hosted article-to-Kindle app for personal use. Paste a public article URL o
 - Browser extension for sending rendered paid Substack posts without copying cookies
 - Private OPDS catalogs for KOReader or other OPDS-capable readers
 - PWA manifest/icon for installing from the browser
+- **CLI (`kindleflow`)** and **MCP server (`kindleflow-mcp`)** for cron jobs, scripts, and LLM agents (Claude Desktop, OpenClaw)
 - Docker Compose deployment for a Synology NAS
+
+## CLI and MCP server
+
+KindleFlow ships a thin CLI and a Model Context Protocol (MCP) server on top of
+the existing HTTP API. Both authenticate with a personal token minted in the
+web UI under **Settings → API tokens**.
+
+### Building
+
+The CLI and MCP server are not deployed to the NAS — they run on your local
+machine against the KindleFlow server. From a checkout:
+
+```bash
+npm ci
+npm run build:cli   # → dist/cli/cli/index.js
+npm run build:mcp   # → dist/mcp/mcp/server.js
+```
+
+Optionally symlink the CLI into your `PATH`:
+
+```bash
+ln -s "$PWD/dist/cli/cli/index.js" ~/.local/bin/kindleflow
+chmod +x ~/.local/bin/kindleflow
+```
+
+### CLI usage
+
+```bash
+# One-time pairing — verifies the token, then writes ~/.config/kindleflow/config.yaml (mode 0600)
+kindleflow login --url https://kindleflow.tail217062.ts.net --token kf_pat_…
+
+# Send a URL through fetch → generate → (optional) Kindle delivery
+kindleflow send https://example.com/article
+kindleflow send https://example.com/article --no-send        # generate only
+kindleflow send https://example.com/article --title "Custom"
+
+# Batch import — newline-delimited URLs; lines beginning with # are ignored
+kindleflow send-batch urls.txt
+
+# Recent imports + delivery status (table on a TTY, JSON when piped)
+kindleflow latest --limit 10
+
+# Retry a failed Kindle delivery
+kindleflow retry <deliveryId>
+
+# Show reachability, auth, SMTP config, recent deliveries
+kindleflow status
+```
+
+Exit codes: `0` success, `2` auth failure, `3` import/parse failure, `4`
+delivery failure, `5` network unreachable.
+
+Config precedence: command-line flag → env (`KINDLEFLOW_URL`,
+`KINDLEFLOW_TOKEN`) → `~/.config/kindleflow/config.yaml`.
+
+### MCP server (Claude Desktop / OpenClaw / Cursor)
+
+The MCP server reads `KINDLEFLOW_URL` and `KINDLEFLOW_TOKEN` from its
+environment. Example Claude Desktop entry:
+
+```json
+{
+  "mcpServers": {
+    "kindleflow": {
+      "command": "node",
+      "args": ["/abs/path/to/kindleflow/dist/mcp/mcp/server.js"],
+      "env": {
+        "KINDLEFLOW_URL": "https://kindleflow.tail217062.ts.net",
+        "KINDLEFLOW_TOKEN": "kf_pat_…"
+      }
+    }
+  }
+}
+```
+
+Tools exposed: `kindleflow.send_article`, `kindleflow.send_batch`,
+`kindleflow.list_recent`, `kindleflow.retry_delivery`.
+
+### API token scope
+
+Personal tokens (`kf_pat_…`) get full account access on every endpoint
+**except** `/api/tokens*`, which stays cookie-only — you always have to come
+back to the web UI to mint or revoke tokens. Revoke a token from the web UI
+to immediately invalidate any CLI / MCP client using it.
 
 ## Local development
 
