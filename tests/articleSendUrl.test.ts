@@ -1,5 +1,4 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import fastifyCookie from "@fastify/cookie";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -28,10 +27,9 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     port: 0,
     dataDir: "/tmp/kf-test",
     dbPath: "/tmp/kf-test/db.sqlite",
-    inviteCodesFile: "/tmp/kf-test/invite.txt",
     appBaseUrl: "http://localhost",
-    cookieSecure: false,
-    sessionTtlDays: 30,
+    authDevBypass: false,
+    authDevEmail: "dev@local",
     smtp: SMTP,
     ...overrides
   };
@@ -92,9 +90,7 @@ let seedUserId: string;
 beforeEach(async () => {
   tempDir = await mkdtemp(path.join(os.tmpdir(), "kindleflow-sendurl-"));
   store = new AuthStore(path.join(tempDir, "db.sqlite"));
-  const code = store.createLoginCode("tj@example.com", "secret", "secret");
-  const session = store.consumeLoginCode("tj@example.com", code);
-  seedUserId = store.getUserBySession(session)!.id;
+  seedUserId = store.getOrCreateUserByEmail("tj@example.com").id;
 });
 
 afterEach(async () => {
@@ -385,8 +381,7 @@ describe("sendArticleByUrl orchestration", () => {
 describe("POST /api/articles/send-url route", () => {
   async function buildApp(deps: SendArticleByUrlDeps): Promise<FastifyInstance> {
     const app = Fastify();
-    await app.register(fastifyCookie);
-    const auth = createAuthHelpers(store, "kf_session");
+    const auth = createAuthHelpers(store);
     registerSendUrlRoute(app, deps, auth);
     await app.ready();
     return app;

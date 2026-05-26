@@ -17,11 +17,7 @@ beforeEach(async () => {
   store = new AuthStore(dbPath);
   
   // Create a test user
-  const loginCode = store.createLoginCode("test@example.com", "secret", "secret");
-  const sessionToken = store.consumeLoginCode("test@example.com", loginCode);
-  const user = store.getUserBySession(sessionToken);
-  if (!user) throw new Error("Failed to create test user");
-  userId = user.id;
+  userId = store.getOrCreateUserByEmail("test@example.com").id;
 });
 
 afterEach(async () => {

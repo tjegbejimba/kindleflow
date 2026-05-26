@@ -18,71 +18,65 @@ afterEach(async () => {
 });
 
 describe("AuthStore", () => {
-  it("requires an invite code for new users, then verifies login with a one-time email code", () => {
-    expect(() => store.createLoginCode("tj@example.com", undefined, "secret")).toThrow(/invite/i);
-
-    const loginCode = store.createLoginCode("TJ@Example.com", "secret", "secret");
-    expect(loginCode).toMatch(/^\d{6}$/);
-
-    const sessionToken = store.consumeLoginCode("tj@example.com", loginCode);
-    expect(sessionToken).toHaveLength(48);
-
-    const user = store.getUserBySession(sessionToken);
-    expect(user).toMatchObject({
-      email: "tj@example.com",
-      verified: true,
-      autoSendToKindle: true,
-      subscriptionRetentionDays: 30
-    });
+  it("JIT-creates a user from an email with verified=true", () => {
+    const user = store.getOrCreateUserByEmail("TJ@Example.com");
+    expect(user.email).toBe("tj@example.com");
+    expect(user.verified).toBe(true);
+    expect(user.autoSendToKindle).toBe(true);
+    expect(user.subscriptionRetentionDays).toBe(30);
   });
 
-  it("supports a configurable session lifetime", async () => {
-    store.close();
-    await rm(tempDir, { recursive: true, force: true });
-    tempDir = await mkdtemp(path.join(os.tmpdir(), "kindleflow-auth-"));
-    store = new AuthStore(path.join(tempDir, "kindleflow.sqlite"), { sessionTtlMs: 1 });
+  it("returns the same user on a repeat lookup", () => {
+    const first = store.getOrCreateUserByEmail("reader@example.com");
+    const second = store.getOrCreateUserByEmail("reader@example.com");
+    expect(second.id).toBe(first.id);
+  });
 
-    const loginCode = store.createLoginCode("short@example.com", "secret", "secret");
-    const sessionToken = store.consumeLoginCode("short@example.com", loginCode);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+  it("populates a missing display name on subsequent lookup but never overwrites", () => {
+    const initial = store.getOrCreateUserByEmail("reader@example.com");
+    expect(initial.displayName).toBeUndefined();
 
-    expect(store.getUserBySession(sessionToken)).toBeNull();
+    const named = store.getOrCreateUserByEmail("reader@example.com", "Reader One");
+    expect(named.displayName).toBe("Reader One");
+
+    const renamed = store.getOrCreateUserByEmail("reader@example.com", "Different Name");
+    expect(renamed.displayName).toBe("Reader One");
+  });
+
+  it("rejects malformed emails", () => {
+    expect(() => store.getOrCreateUserByEmail("not-an-email")).toThrow(/valid email/i);
+    expect(() => store.getOrCreateUserByEmail("")).toThrow();
   });
 
   it("stores a per-user Kindle email and dedupes subscriptions", () => {
-    const token = store.createLoginCode("reader@example.com", "secret", "secret");
-    const session = store.consumeLoginCode("reader@example.com", token);
-    const user = store.getUserBySession(session);
-    expect(user).not.toBeNull();
+    const user = store.getOrCreateUserByEmail("reader@example.com");
 
-    store.updateUserProfile(user!.id, {
+    store.updateUserProfile(user.id, {
       kindleEmail: "reader_123@kindle.com",
       autoSendToKindle: true,
       subscriptionRetentionDays: 14
     });
-    const updated = store.getUserBySession(session);
+    const updated = store.getUserById(user.id);
     expect(updated?.kindleEmail).toBe("reader_123@kindle.com");
     expect(updated?.subscriptionRetentionDays).toBe(14);
 
-    const first = store.addSubscription(user!.id, {
+    const first = store.addSubscription(user.id, {
       feedUrl: "https://example.substack.com/feed",
       sourceUrl: "https://example.substack.com",
       title: "Example Substack"
     });
-    const second = store.addSubscription(user!.id, {
+    const second = store.addSubscription(user.id, {
       feedUrl: "https://example.substack.com/feed",
       sourceUrl: "https://example.substack.com",
       title: "Example Substack"
     });
 
     expect(second.id).toBe(first.id);
-    expect(store.listSubscriptions(user!.id)).toHaveLength(1);
+    expect(store.listSubscriptions(user.id)).toHaveLength(1);
   });
 
-  it("prunes delivered posts older than a user's retention setting", async () => {
-    const token = store.createLoginCode("reader@example.com", "secret", "secret");
-    const session = store.consumeLoginCode("reader@example.com", token);
-    const user = store.getUserBySession(session)!;
+  it("prunes delivered posts older than a user's retention setting", () => {
+    const user = store.getOrCreateUserByEmail("reader@example.com");
     store.updateUserProfile(user.id, { subscriptionRetentionDays: 7 });
     const subscription = store.addSubscription(user.id, {
       feedUrl: "https://example.substack.com/feed",
@@ -111,9 +105,7 @@ describe("AuthStore", () => {
   });
 
   it("creates OPDS tokens and tracks generated library items", () => {
-    const token = store.createLoginCode("reader@example.com", "secret", "secret");
-    const session = store.consumeLoginCode("reader@example.com", token);
-    const user = store.getUserBySession(session)!;
+    const user = store.getOrCreateUserByEmail("reader@example.com");
     const subscription = store.addSubscription(user.id, {
       feedUrl: "https://example.substack.com/feed",
       sourceUrl: "https://example.substack.com",
@@ -163,9 +155,7 @@ describe("AuthStore", () => {
   });
 
   it("records Kindle delivery attempts and retry results", () => {
-    const token = store.createLoginCode("reader@example.com", "secret", "secret");
-    const session = store.consumeLoginCode("reader@example.com", token);
-    const user = store.getUserBySession(session)!;
+    const user = store.getOrCreateUserByEmail("reader@example.com");
     const item = store.addLibraryItem(user.id, {
       type: "article",
       title: "Saved Article",
@@ -217,9 +207,7 @@ describe("AuthStore", () => {
   });
 
   it("removes expired library items when pruning delivered posts", () => {
-    const token = store.createLoginCode("reader@example.com", "secret", "secret");
-    const session = store.consumeLoginCode("reader@example.com", token);
-    const user = store.getUserBySession(session)!;
+    const user = store.getOrCreateUserByEmail("reader@example.com");
     store.updateUserProfile(user.id, { subscriptionRetentionDays: 7 });
     const subscription = store.addSubscription(user.id, {
       feedUrl: "https://example.substack.com/feed",
@@ -248,11 +236,7 @@ describe("AuthStore", () => {
   });
 
   it("mints, lists, validates, and revokes API tokens", () => {
-    const session = store.consumeLoginCode(
-      "reader@example.com",
-      store.createLoginCode("reader@example.com", "secret", "secret")
-    );
-    const user = store.getUserBySession(session)!;
+    const user = store.getOrCreateUserByEmail("reader@example.com");
 
     const minted = store.createApiToken(user.id, "Laptop CLI");
     expect(minted.token).toMatch(/^kf_pat_[A-Za-z0-9_-]{40,}$/);
@@ -278,11 +262,7 @@ describe("AuthStore", () => {
   });
 
   it("looks up library items by source URL for dedupe", () => {
-    const session = store.consumeLoginCode(
-      "reader@example.com",
-      store.createLoginCode("reader@example.com", "secret", "secret")
-    );
-    const user = store.getUserBySession(session)!;
+    const user = store.getOrCreateUserByEmail("reader@example.com");
     store.addLibraryItem(user.id, {
       type: "article",
       title: "Saved",
@@ -298,11 +278,7 @@ describe("AuthStore", () => {
   });
 
   it("returns recent library items with their latest delivery", () => {
-    const session = store.consumeLoginCode(
-      "reader@example.com",
-      store.createLoginCode("reader@example.com", "secret", "secret")
-    );
-    const user = store.getUserBySession(session)!;
+    const user = store.getOrCreateUserByEmail("reader@example.com");
     const item = store.addLibraryItem(user.id, {
       type: "article",
       title: "With Delivery",
@@ -343,11 +319,7 @@ describe("AuthStore", () => {
   });
 
   it("api_tokens migration is idempotent on an existing DB", () => {
-    const session = store.consumeLoginCode(
-      "reader@example.com",
-      store.createLoginCode("reader@example.com", "secret", "secret")
-    );
-    const user = store.getUserBySession(session)!;
+    const user = store.getOrCreateUserByEmail("reader@example.com");
     const minted = store.createApiToken(user.id, "first");
     store.close();
 

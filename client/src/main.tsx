@@ -4,8 +4,9 @@ import "./styles.css";
 
 interface AppConfig {
   emailDeliveryEnabled: boolean;
-  inviteRequired: boolean;
   authRequired: boolean;
+  authMode: "header-trust";
+  authDevBypassActive: boolean;
   kindleApprovedSender?: string;
   kindleSettingsUrl: string;
 }
@@ -13,6 +14,7 @@ interface AppConfig {
 interface UserProfile {
   id: string;
   email: string;
+  displayName?: string;
   verified: boolean;
   kindleEmail?: string;
   autoSendToKindle: boolean;
@@ -235,10 +237,6 @@ function App() {
   const [subscriptions, setSubscriptions] = React.useState<Subscription[]>([]);
   const [deliveries, setDeliveries] = React.useState<KindleDelivery[]>([]);
   const [opdsUrl, setOpdsUrl] = React.useState("");
-  const [loginEmail, setLoginEmail] = React.useState("");
-  const [loginCode, setLoginCode] = React.useState("");
-  const [loginCodeSent, setLoginCodeSent] = React.useState(false);
-  const [inviteCode, setInviteCode] = React.useState("");
   const [kindleEmail, setKindleEmail] = React.useState("");
   const [autoSendToKindle, setAutoSendToKindle] = React.useState(true);
   const [subscriptionRetentionDays, setSubscriptionRetentionDays] = React.useState(30);
@@ -282,7 +280,6 @@ function App() {
     []
   );
   const [busyAction, setBusyAction] = React.useState<
-    | "login"
     | "profile"
     | "opds"
     | "fetch"
@@ -294,7 +291,6 @@ function App() {
     | "retryDelivery"
     | "subscribe"
     | "poll"
-    | "logout"
     | null
   >(null);
 
@@ -365,7 +361,7 @@ function App() {
     if (!user) {
       setPendingExtensionImport(null);
       setStatus("");
-      setError("Sign in to KindleFlow, then click the extension button again to import this article.");
+      setError("Sign in to KindleFlow through your SSO proxy, then click the extension button again to import this article.");
       return;
     }
 
@@ -377,47 +373,6 @@ function App() {
     setKindleEmail(nextUser?.kindleEmail ?? "");
     setAutoSendToKindle(nextUser?.autoSendToKindle ?? true);
     setSubscriptionRetentionDays(nextUser?.subscriptionRetentionDays ?? 30);
-  }
-
-  async function requestLoginCode(event: React.FormEvent) {
-    event.preventDefault();
-    setBusyAction("login");
-    setError("");
-    setStatus("Sending login code...");
-
-    try {
-      await apiPost("/api/auth/request-code", { email: loginEmail, inviteCode });
-      setLoginCodeSent(true);
-      setStatus("Check your email for a 6-digit KindleFlow login code, then enter it here.");
-    } catch (err) {
-      setStatus("");
-      setError(errorMessage(err));
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function verifyLoginCode(event: React.FormEvent) {
-    event.preventDefault();
-    setBusyAction("login");
-    setError("");
-    setStatus("Verifying login code...");
-
-    try {
-      const response = await apiPost<{ user: UserProfile }>("/api/auth/verify-code", { email: loginEmail, code: loginCode });
-      applyUser(response.user);
-      setLoginCode("");
-      setLoginCodeSent(false);
-      await loadSubscriptions();
-      await loadOpdsUrl();
-      await loadDeliveries();
-      setStatus("You are signed in.");
-    } catch (err) {
-      setStatus("");
-      setError(errorMessage(err));
-    } finally {
-      setBusyAction(null);
-    }
   }
 
   async function saveProfile(event: React.FormEvent) {
@@ -436,26 +391,6 @@ function App() {
       setStatus("Profile saved.");
     } catch (err) {
       setStatus("");
-      setError(errorMessage(err));
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function logout() {
-    setBusyAction("logout");
-    setError("");
-    try {
-      await apiPost("/api/auth/logout", {});
-      applyUser(null);
-      setSubscriptions([]);
-      setDeliveries([]);
-      setResult(null);
-      setGeneratedFile(null);
-      setPdfAnalysis(null);
-      setOpdsUrl("");
-      setStatus("Signed out.");
-    } catch (err) {
       setError(errorMessage(err));
     } finally {
       setBusyAction(null);
@@ -701,83 +636,31 @@ function App() {
 
       {!user ? (
         <section className="card">
-          <h2>Sign in</h2>
+          <h2>Not signed in</h2>
           <p className="muted">
-            KindleFlow emails a one-time code so you can finish signing in from this browser. New users need the invite
-            code, and email sending must be configured on the server.
+            KindleFlow relies on its upstream reverse proxy (Tinyauth/Pocket-ID) to authenticate you. Make sure
+            you reached this app through that proxy.
           </p>
-          {config && !config.emailDeliveryEnabled ? (
-            <p className="error">Email delivery is not configured yet. Add Gmail SMTP settings before logging in.</p>
-          ) : null}
-          <form onSubmit={loginCodeSent ? verifyLoginCode : requestLoginCode}>
-            <label htmlFor="login-email">Email</label>
-            <input
-              id="login-email"
-              type="email"
-              value={loginEmail}
-              onChange={(event) => setLoginEmail(event.target.value)}
-              disabled={loginCodeSent}
-              required
-            />
-            {config?.inviteRequired && !loginCodeSent ? (
-              <>
-                <label htmlFor="invite-code">Invite code</label>
-                <input
-                  id="invite-code"
-                  type="password"
-                  value={inviteCode}
-                  onChange={(event) => setInviteCode(event.target.value)}
-                />
-              </>
-            ) : null}
-            {loginCodeSent ? (
-              <>
-                <label htmlFor="login-code">Login code</label>
-                <input
-                  id="login-code"
-                  inputMode="numeric"
-                  pattern="[0-9]{6}"
-                  autoComplete="one-time-code"
-                  placeholder="123456"
-                  value={loginCode}
-                  onChange={(event) => setLoginCode(event.target.value)}
-                  required
-                />
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => {
-                    setLoginCodeSent(false);
-                    setLoginCode("");
-                    setStatus("");
-                  }}
-                  disabled={isBusy}
-                >
-                  Use a different email
-                </button>
-              </>
-            ) : null}
-            <button type="submit" disabled={isBusy || !config?.emailDeliveryEnabled}>
-              {busyAction === "login"
-                ? loginCodeSent
-                  ? "Verifying..."
-                  : "Sending..."
-                : loginCodeSent
-                  ? "Verify code"
-                  : "Email me a login code"}
-            </button>
-          </form>
+          {config?.authDevBypassActive ? (
+            <p className="muted">
+              Dev bypass is enabled but the server has not yet treated you as the dev user. Refresh the page —
+              if that fails, check the server logs.
+            </p>
+          ) : (
+            <p className="muted">
+              For local development, set <code>AUTH_DEV_BYPASS=true</code> and run with{" "}
+              <code>NODE_ENV=development</code>.
+            </p>
+          )}
         </section>
       ) : (
         <>
           <section className="card account-card">
             <div>
               <p className="eyebrow">Signed in</p>
-              <h2>{user.email}</h2>
+              <h2>{user.displayName ?? user.email}</h2>
+              {user.displayName ? <p className="muted">{user.email}</p> : null}
             </div>
-            <button type="button" className="secondary" onClick={logout} disabled={isBusy}>
-              {busyAction === "logout" ? "Signing out..." : "Sign out"}
-            </button>
           </section>
 
           <section className="card extension-callout">
@@ -790,7 +673,7 @@ function App() {
               </p>
             </div>
             <div className="extension-steps">
-              <span>1. Sign in here</span>
+              <span>1. Open KindleFlow</span>
               <span>2. Open the paid post</span>
               <span>3. Click the extension</span>
             </div>

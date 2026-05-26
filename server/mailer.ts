@@ -3,17 +3,6 @@ import path from "node:path";
 import nodemailer from "nodemailer";
 import type { SmtpConfig } from "./config.js";
 
-export async function sendLoginCode(config: SmtpConfig, email: string, code: string): Promise<void> {
-  const transporter = createTransporter(config);
-  await transporter.sendMail({
-    from: config.from,
-    to: email,
-    subject: "Your KindleFlow login code",
-    text: `Enter this code to sign in to KindleFlow:\n\n${code}\n\nThis code expires in 15 minutes.`,
-    html: `<p>Enter this code to sign in to KindleFlow:</p><p><strong style="font-size: 1.6em; letter-spacing: 0.12em;">${escapeHtml(code)}</strong></p><p>This code expires in 15 minutes.</p>`
-  });
-}
-
 export async function sendFileToKindle(
   config: SmtpConfig,
   dataDir: string,
@@ -75,12 +64,4 @@ function createTransporter(config: SmtpConfig) {
     secure: config.secure,
     auth: config.user && config.pass ? { user: config.user, pass: config.pass } : undefined
   });
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }

@@ -3,6 +3,35 @@
 Repo-level instructions for coding agents. Read this before doing anything
 involving the NAS or production data.
 
+## Auth
+
+KindleFlow uses **header-trust authentication only**. There is no login UI,
+no email-code flow, no cookie sessions.
+
+- The app trusts `X-Auth-Request-Email` (and optionally `X-Auth-Request-User`
+  for display name) from an upstream reverse proxy (Tinyauth / Caddy /
+  Cloudflare Access).
+- Unknown emails are JIT-provisioned as new users.
+- `Authorization: Bearer kf_pat_*` PATs still work end-to-end for CLI and
+  MCP. They're issued from the web UI (Settings → API tokens) once the user
+  is logged in via the proxy.
+- OPDS uses URL path tokens (`/opds/:token/...`) — bypasses header auth.
+
+**The container MUST only be reachable through the trusted proxy.** Anyone
+who can hit the container directly can spoof identity by setting the email
+header. Two layers of defense:
+
+1. Network: don't expose host ports once Caddy/Tinyauth is in front; keep
+   the app on a private Docker network reachable only from the proxy.
+2. Optional shared secret: set `AUTH_TRUSTED_PROXY_SECRET` and configure the
+   proxy to inject a matching `X-Auth-Request-Proxy-Secret` header. The app
+   then refuses header-auth requests without it.
+
+For local dev, set `AUTH_DEV_BYPASS=true` and `NODE_ENV=development`. The
+app then treats every unauthenticated request as `AUTH_DEV_EMAIL`
+(default `dev@kindleflow.local`). `loadConfig` refuses to start if
+`AUTH_DEV_BYPASS=true` is combined with `NODE_ENV=production`.
+
 ## Deployment
 
 KindleFlow is **not** deployed via GHCR or Watchtower. It runs from an on-NAS
@@ -26,13 +55,12 @@ state in `tailscale/state/`; it does not need `TS_AUTHKEY` set for restarts.
 The NAS checkout contains **untracked-but-critical** files that are *not* in
 git:
 
-- `.env` — SMTP credentials, `INVITE_CODE`, `SUBSTACK_COOKIE`,
-  `APP_BASE_URL`, `PORT=3060`, `COOKIE_SECURE=true`, etc. **There is no
-  backup.** If this file is deleted, email login and Kindle delivery stop
-  working until the user re-pastes the secrets by hand.
-- `data/` — SQLite DB (`kindleflow.sqlite`), `invite-codes.txt`, generated
-  EPUBs/PDFs. Losing this wipes every user account, delivery history, and
-  invite code.
+- `.env` — SMTP credentials, `AUTH_TRUSTED_PROXY_SECRET`, `SUBSTACK_COOKIE`,
+  `APP_BASE_URL`, `PORT=3060`, etc. **There is no backup.** If this file is
+  deleted, Kindle delivery stops working until the user re-pastes the secrets
+  by hand.
+- `data/` — SQLite DB (`kindleflow.sqlite`) and generated EPUBs/PDFs. Losing
+  this wipes every user account and delivery history.
 - `tailscale/state/` — Tailscale node identity. Losing it forces re-auth of
   the sidecar with a fresh `TS_AUTHKEY`.
 
@@ -96,8 +124,9 @@ the existing NAS server.
 - Auth: bearer tokens minted in the web UI (Settings → API tokens). Stored
   as SHA-256 hashes in the `api_tokens` SQLite table; plaintext is shown
   once on creation only.
-- Bearer carve-out: `/api/tokens*` endpoints accept cookie sessions only,
-  not bearer tokens. Every other endpoint accepts both.
+- Browser carve-out: `/api/tokens*` endpoints accept the browser's
+  header-auth user only, not bearer tokens. Every other endpoint accepts
+  both header-auth and bearer.
 - Server orchestration endpoint `POST /api/articles/send-url` is the single
   call CLI/MCP make for `send` / `send_article`; it runs
   fetch → generate → (send | skip) honouring `sendMode: "auto" | "force" |

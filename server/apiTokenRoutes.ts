@@ -4,7 +4,7 @@ import type { AuthStore } from "./authStore.js";
 
 export function registerApiTokenRoutes(app: FastifyInstance, store: AuthStore, auth: AuthHelpers): void {
   app.post("/api/tokens", async (request) => {
-    const user = auth.requireUserCookieOnly(request);
+    const user = auth.requireBrowserUser(request);
     const body = (request.body ?? {}) as { name?: unknown };
     if (typeof body.name !== "string") {
       const error = new Error("Token name is required.");
@@ -22,12 +22,12 @@ export function registerApiTokenRoutes(app: FastifyInstance, store: AuthStore, a
   });
 
   app.get("/api/tokens", async (request) => {
-    const user = auth.requireUserCookieOnly(request);
+    const user = auth.requireBrowserUser(request);
     return { tokens: store.listApiTokens(user.id) };
   });
 
   app.delete("/api/tokens/:tokenId", async (request) => {
-    const user = auth.requireUserCookieOnly(request);
+    const user = auth.requireBrowserUser(request);
     const { tokenId } = request.params as { tokenId: string };
     const revoked = store.revokeApiToken(user.id, tokenId);
     if (!revoked) {

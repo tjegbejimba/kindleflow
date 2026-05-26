@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 export interface UserProfile {
   id: string;
   email: string;
+  displayName?: string;
   verified: boolean;
   kindleEmail?: string;
   autoSendToKindle: boolean;
@@ -129,15 +130,10 @@ export interface RecentLibraryItem extends LibraryItem {
 
 export const API_TOKEN_PREFIX = "kf_pat_";
 
-const LOGIN_CODE_TTL_MS = 15 * 60 * 1000;
-const DEFAULT_SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000;
-
 export class AuthStore {
   private readonly db: DatabaseSync;
-  private readonly sessionTtlMs: number;
 
-  constructor(dbPath: string, options: { sessionTtlMs?: number } = {}) {
-    this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+  constructor(dbPath: string) {
     mkdirSync(path.dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
     this.db.exec("PRAGMA journal_mode = WAL");
@@ -149,114 +145,56 @@ export class AuthStore {
     this.db.close();
   }
 
-  createLoginCode(emailInput: string, inviteCode: string | undefined, expectedInviteCode: string | undefined): string {
+  getOrCreateUserByEmail(emailInput: string, displayNameInput?: string | null): UserProfile {
     const email = normalizeEmail(emailInput);
-    let user = this.findUserByEmail(email);
+    const displayName = normalizeDisplayName(displayNameInput);
 
-    if (!user) {
-      if (inviteCode !== "__already_invited__" && (!expectedInviteCode || inviteCode !== expectedInviteCode)) {
-        throw new Error("A valid invite code is required for new users.");
-      }
+    // Race-safe: INSERT OR IGNORE then SELECT.
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO users (id, email, display_name, verified_at, auto_send_to_kindle, created_at)
+         VALUES (?, ?, ?, datetime('now'), 1, datetime('now'))`
+      )
+      .run(id, email, displayName);
 
-      const id = randomUUID();
+    // If a display name was supplied and the existing row has none, set it (don't overwrite).
+    if (displayName) {
       this.db
         .prepare(
-          "INSERT INTO users (id, email, auto_send_to_kindle, created_at) VALUES (?, ?, 1, datetime('now'))"
+          `UPDATE users SET display_name = ?, updated_at = datetime('now')
+           WHERE email = ? AND (display_name IS NULL OR display_name = '')`
         )
-        .run(id, email);
-      user = { id };
+        .run(displayName, email);
     }
 
-    this.db.prepare("UPDATE login_codes SET used_at = datetime('now') WHERE user_id = ? AND used_at IS NULL").run(user.id);
-
-    const code = randomLoginCode();
-    this.db
-      .prepare(
-        "INSERT INTO login_codes (id, user_id, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, datetime('now'))"
-      )
-      .run(randomUUID(), user.id, hashLoginCode(user.id, code), Date.now() + LOGIN_CODE_TTL_MS);
-
-    return code;
-  }
-
-  consumeLoginCode(emailInput: string, codeInput: string): string {
-    const email = normalizeEmail(emailInput);
-    const code = normalizeLoginCode(codeInput);
-    const user = this.findUserByEmail(email);
+    const user = this.findUserProfileByEmail(email);
     if (!user) {
-      throw new Error("This login code is invalid or expired.");
+      throw new Error("Failed to resolve user after JIT provisioning.");
     }
-
-    const now = Date.now();
-    const row = this.db
-      .prepare(
-        `SELECT id, user_id AS userId
-         FROM login_codes
-         WHERE user_id = ? AND code_hash = ? AND used_at IS NULL AND expires_at > ?`
-      )
-      .get(user.id, hashLoginCode(user.id, code), now) as { id: string; userId: string } | undefined;
-
-    if (!row) {
-      throw new Error("This login code is invalid or expired.");
-    }
-
-    this.db.prepare("UPDATE login_codes SET used_at = datetime('now') WHERE id = ?").run(row.id);
-    this.db.prepare("UPDATE users SET verified_at = COALESCE(verified_at, datetime('now')) WHERE id = ?").run(row.userId);
-
-    const sessionToken = randomToken();
-    this.db
-      .prepare("INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
-      .run(randomUUID(), row.userId, hashToken(sessionToken), now + this.sessionTtlMs);
-
-    return sessionToken;
+    return user;
   }
 
-  userExists(emailInput: string): boolean {
-    return Boolean(this.findUserByEmail(normalizeEmail(emailInput)));
-  }
-
-  getUserBySession(sessionToken: string | undefined): UserProfile | null {
-    if (!sessionToken) {
-      return null;
-    }
-
+  private findUserProfileByEmail(email: string): UserProfile | null {
     const row = this.db
       .prepare(
-        `SELECT users.id, users.email, users.verified_at AS verifiedAt, users.kindle_email AS kindleEmail,
-                users.auto_send_to_kindle AS autoSendToKindle,
-                users.subscription_retention_days AS subscriptionRetentionDays
-         FROM sessions
-         JOIN users ON users.id = sessions.user_id
-         WHERE sessions.token_hash = ? AND sessions.expires_at > ?`
+        `SELECT id, email, display_name AS displayName, verified_at AS verifiedAt, kindle_email AS kindleEmail,
+                auto_send_to_kindle AS autoSendToKindle,
+                subscription_retention_days AS subscriptionRetentionDays
+         FROM users WHERE email = ?`
       )
-      .get(hashToken(sessionToken), Date.now()) as
+      .get(email) as
       | {
           id: string;
           email: string;
+          displayName?: string;
           verifiedAt?: string;
           kindleEmail?: string;
           autoSendToKindle: number;
           subscriptionRetentionDays: number;
         }
       | undefined;
-
     return row ? toUserProfile(row) : null;
-  }
-
-  refreshSession(sessionToken: string | undefined): void {
-    if (!sessionToken) {
-      return;
-    }
-    this.db
-      .prepare("UPDATE sessions SET expires_at = ? WHERE token_hash = ? AND expires_at > ?")
-      .run(Date.now() + this.sessionTtlMs, hashToken(sessionToken), Date.now());
-  }
-
-  destroySession(sessionToken: string | undefined): void {
-    if (!sessionToken) {
-      return;
-    }
-    this.db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(sessionToken));
   }
 
   updateUserProfile(
@@ -291,7 +229,7 @@ export class AuthStore {
   getUserById(userId: string): UserProfile | null {
     const row = this.db
       .prepare(
-        `SELECT id, email, verified_at AS verifiedAt, kindle_email AS kindleEmail,
+        `SELECT id, email, display_name AS displayName, verified_at AS verifiedAt, kindle_email AS kindleEmail,
                 auto_send_to_kindle AS autoSendToKindle,
                 subscription_retention_days AS subscriptionRetentionDays
          FROM users WHERE id = ?`
@@ -300,9 +238,11 @@ export class AuthStore {
       | {
           id: string;
           email: string;
+          displayName?: string;
           verifiedAt?: string;
           kindleEmail?: string;
           autoSendToKindle: number;
+          subscription_retention_days?: number;
           subscriptionRetentionDays: number;
         }
       | undefined;
@@ -437,7 +377,7 @@ export class AuthStore {
     }
     const row = this.db
       .prepare(
-        `SELECT users.id, users.email, users.verified_at AS verifiedAt, users.kindle_email AS kindleEmail,
+        `SELECT users.id, users.email, users.display_name AS displayName, users.verified_at AS verifiedAt, users.kindle_email AS kindleEmail,
                 users.auto_send_to_kindle AS autoSendToKindle,
                 users.subscription_retention_days AS subscriptionRetentionDays
          FROM api_tokens
@@ -448,6 +388,7 @@ export class AuthStore {
       | {
           id: string;
           email: string;
+          displayName?: string;
           verifiedAt?: string;
           kindleEmail?: string;
           autoSendToKindle: number;
@@ -550,7 +491,7 @@ export class AuthStore {
 
     const row = this.db
       .prepare(
-        `SELECT id, email, verified_at AS verifiedAt, kindle_email AS kindleEmail,
+        `SELECT id, email, display_name AS displayName, verified_at AS verifiedAt, kindle_email AS kindleEmail,
                 auto_send_to_kindle AS autoSendToKindle,
                 subscription_retention_days AS subscriptionRetentionDays
          FROM users WHERE opds_token = ?`
@@ -559,6 +500,7 @@ export class AuthStore {
       | {
           id: string;
           email: string;
+          displayName?: string;
           verifiedAt?: string;
           kindleEmail?: string;
           autoSendToKindle: number;
@@ -845,16 +787,12 @@ export class AuthStore {
     return row ? toSubscription(row) : null;
   }
 
-  private findUserByEmail(email: string): { id: string } | null {
-    const row = this.db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string } | undefined;
-    return row ?? null;
-  }
-
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         email TEXT NOT NULL UNIQUE,
+        display_name TEXT,
         verified_at TEXT,
         kindle_email TEXT,
         auto_send_to_kindle INTEGER NOT NULL DEFAULT 1,
@@ -965,6 +903,7 @@ export class AuthStore {
     `);
     this.addColumnIfMissing("users", "subscription_retention_days", "INTEGER NOT NULL DEFAULT 30");
     this.addColumnIfMissing("users", "opds_token", "TEXT");
+    this.addColumnIfMissing("users", "display_name", "TEXT");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_opds_token ON users(opds_token)");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_kindle_deliveries_user_updated ON kindle_deliveries(user_id, updated_at)");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_temporary_files_expires_at ON temporary_files(expires_at)");
@@ -1044,16 +983,8 @@ function randomToken(): string {
   return randomBytes(36).toString("base64url");
 }
 
-function randomLoginCode(): string {
-  return randomInt(0, 1_000_000).toString().padStart(6, "0");
-}
-
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
-}
-
-function hashLoginCode(userId: string, code: string): string {
-  return createHash("sha256").update(`${userId}:${code}`).digest("hex");
 }
 
 function normalizeEmail(email: string): string {
@@ -1064,12 +995,11 @@ function normalizeEmail(email: string): string {
   return normalized;
 }
 
-function normalizeLoginCode(code: string): string {
-  const normalized = code.trim().replace(/\s+/g, "");
-  if (!/^\d{6}$/.test(normalized)) {
-    throw new Error("Enter the 6-digit login code from your email.");
-  }
-  return normalized;
+function normalizeDisplayName(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 200);
 }
 
 function normalizeOptionalEmail(email: string | null): string | null {
@@ -1082,6 +1012,7 @@ function normalizeOptionalEmail(email: string | null): string | null {
 function toUserProfile(row: {
   id: string;
   email: string;
+  displayName?: string;
   verifiedAt?: string;
   kindleEmail?: string;
   autoSendToKindle: number;
@@ -1090,6 +1021,7 @@ function toUserProfile(row: {
   return {
     id: row.id,
     email: row.email,
+    displayName: row.displayName || undefined,
     verified: Boolean(row.verifiedAt),
     kindleEmail: row.kindleEmail || undefined,
     autoSendToKindle: row.autoSendToKindle === 1,

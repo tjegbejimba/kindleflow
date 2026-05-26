@@ -10,7 +10,7 @@ Self-hosted article-to-Kindle app for personal use. Paste a public article URL o
 - Sanitized article preview and EPUB content
 - EPUB generation into a persistent data directory
 - Generated local PNG covers embedded in each EPUB for nicer Kindle library thumbnails
-- Invite-only email one-time-code login
+- Header-trust authentication: pluggable behind any reverse proxy (Tinyauth, Caddy `forward_auth`, Cloudflare Access)
 - Per-user Kindle email settings and automatic EPUB delivery
 - Kindle delivery history with SMTP response logging, test sends, latest-EPUB sends, and failed-send retry
 - Public Substack/RSS subscriptions with daily polling and dedupe
@@ -100,9 +100,9 @@ Tools exposed: `kindleflow.send_article`, `kindleflow.send_batch`,
 ### API token scope
 
 Personal tokens (`kf_pat_…`) get full account access on every endpoint
-**except** `/api/tokens*`, which stays cookie-only — you always have to come
-back to the web UI to mint or revoke tokens. Revoke a token from the web UI
-to immediately invalidate any CLI / MCP client using it.
+**except** `/api/tokens*`, which stays browser-only — you always have to come
+back to the web UI (through your SSO proxy) to mint or revoke tokens. Revoke
+a token from the web UI to immediately invalidate any CLI / MCP client using it.
 
 ## Local development
 
@@ -154,25 +154,36 @@ Environment variables:
 | Variable | Required | Description |
 | --- | --- | --- |
 | `PORT` | No | Host port for Docker Compose; defaults to `3000`. |
-| `APP_BASE_URL` | Yes for email login | Public/local URL used in OPDS URLs and app links, for example `http://100.104.13.117:3060`. |
-| `INVITE_CODES_FILE` | No | One-time invite-code file path; defaults to `DATA_DIR/invite-codes.txt`. |
-| `INVITE_CODE` | No | Legacy shared invite code fallback when `INVITE_CODES_FILE` does not exist. |
-| `COOKIE_SECURE` | No | Set `true` only when serving over HTTPS. |
-| `SESSION_TTL_DAYS` | No | Browser login session lifetime; defaults to `180` and refreshes on visits. |
+| `APP_BASE_URL` | Yes | Public/local URL used in OPDS URLs and app links, for example `http://100.104.13.117:3060`. |
+| `AUTH_DEV_BYPASS` | No | When `true` and `NODE_ENV` is `development` or `test`, every unauthenticated request is treated as `AUTH_DEV_EMAIL`. Refuses to start in production. |
+| `AUTH_DEV_EMAIL` | No | Email used by the dev bypass; defaults to `dev@kindleflow.local`. |
+| `AUTH_TRUSTED_PROXY_SECRET` | No | When set, the app requires a matching `X-Auth-Request-Proxy-Secret` header on every header-auth request (defense-in-depth). |
 | `SUBSTACK_COOKIE` | No | Substack `Cookie` header value, without the `Cookie:` prefix, used when fetching paid Substack posts. |
 | `SUBSTACK_COOKIE_HOSTS` | No | Comma-separated custom Substack hostnames that may receive `SUBSTACK_COOKIE`; `substack.com` and `*.substack.com` are included automatically. |
 | `DATA_DIR` | No | Directory for generated EPUB files; defaults to `data`. |
 | `DB_PATH` | No | SQLite database path; defaults to `DATA_DIR/kindleflow.sqlite`. |
-| `SMTP_HOST` | For email | SMTP server hostname. |
+| `SMTP_HOST` | For Kindle delivery | SMTP server hostname. |
 | `SMTP_PORT` | No | SMTP port; defaults to `587`. |
 | `SMTP_SECURE` | No | Set `true` for implicit TLS, usually port `465`. |
 | `SMTP_USER` | No | SMTP username, if your server requires auth. |
 | `SMTP_PASS` | No | SMTP password or app password. |
-| `SMTP_FROM` | For email | Approved sender address for Kindle delivery. |
+| `SMTP_FROM` | For Kindle delivery | Approved sender address for Kindle delivery. |
 
-If `SMTP_HOST` or `SMTP_FROM` are missing, users cannot receive login codes or Kindle delivery emails. Do not commit real SMTP credentials.
+If `SMTP_HOST` or `SMTP_FROM` are missing, KindleFlow cannot deliver files to Kindle. Do not commit real SMTP credentials.
 
-Login sessions are stored in an HTTP-only browser cookie. Use one consistent app URL for both `APP_BASE_URL` and browsing the site because cookies are scoped to the exact host; for example, a login cookie from `http://100.104.13.117:3060` will not apply when visiting the Tailscale hostname.
+## Authentication
+
+KindleFlow uses **header-trust authentication** — it has no login screen and no email-code flow. The app expects to sit behind a trusted reverse proxy (Tinyauth + Pocket-ID, Caddy `forward_auth`, Cloudflare Access, etc.) that injects identity headers on every authenticated request:
+
+- `X-Auth-Request-Email` (required) — user identity.
+- `X-Auth-Request-User` (optional) — display name.
+- `X-Auth-Request-Proxy-Secret` (required only if `AUTH_TRUSTED_PROXY_SECRET` is set).
+
+Unknown emails are JIT-provisioned as new accounts. CLI / MCP usage continues to work via `Authorization: Bearer kf_pat_*` tokens minted in the web UI.
+
+**Spoofing risk:** anyone who can hit the container directly can spoof identity by sending the email header. Always keep KindleFlow on a private Docker network reachable only through the trusted proxy. As an extra layer, set `AUTH_TRUSTED_PROXY_SECRET` and configure the proxy to inject the matching secret header.
+
+For local development without a proxy, set `AUTH_DEV_BYPASS=true` and `NODE_ENV=development`. Every request will then be treated as `AUTH_DEV_EMAIL`.
 
 For most users, paid Substack posts should be saved with the browser extension because the server cannot see a user's Substack browser login. As an admin-only fallback, set `SUBSTACK_COOKIE` to the browser cookie value from a logged-in Substack session, without the `Cookie:` prefix. KindleFlow sends it only to `substack.com`, `*.substack.com`, and hosts listed in `SUBSTACK_COOKIE_HOSTS` to avoid leaking it to unrelated article sites.
 
@@ -210,7 +221,6 @@ To load it locally in Chrome/Chromium:
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
 3. Choose “Load unpacked” and select this repo’s `extension/` directory.
-4. Sign in to KindleFlow in the same browser.
 5. Open a readable Substack post, click the KindleFlow extension, confirm the KindleFlow URL, and choose “Send current page”.
 
 For local Firefox testing, load the same `extension/manifest.json` temporarily from `about:debugging#/runtime/this-firefox`.
@@ -254,10 +264,6 @@ Example NAS `.env` for Tailscale access on port `3060`:
 ```env
 PORT=3060
 APP_BASE_URL=http://100.104.13.117:3060
-INVITE_CODE=choose-a-private-invite-code
-INVITE_CODES_FILE=/app/data/invite-codes.txt
-COOKIE_SECURE=false
-SESSION_TTL_DAYS=180
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
@@ -266,11 +272,10 @@ SMTP_PASS=your-google-app-password
 SMTP_FROM=your-address@gmail.com
 ```
 
-For HTTPS over the NAS Tailscale node, use the MagicDNS HTTPS URL as `APP_BASE_URL` and set secure cookies:
+For HTTPS over the NAS Tailscale node, use the MagicDNS HTTPS URL as `APP_BASE_URL`:
 
 ```env
 APP_BASE_URL=https://tjnas.tail217062.ts.net
-COOKIE_SECURE=true
 ```
 
 Then proxy Tailscale HTTPS to the local Docker port:
@@ -285,7 +290,7 @@ On Synology, if `tailscale serve` reports `serve config denied`, grant the SSH u
 sudo tailscale set --operator=tjegbejimba
 ```
 
-Then rerun the `tailscale serve` command and restart KindleFlow with the HTTPS `APP_BASE_URL`/`COOKIE_SECURE` values.
+Then rerun the `tailscale serve` command and restart KindleFlow with the HTTPS `APP_BASE_URL`.
 
 Generated EPUB files persist in:
 
@@ -303,7 +308,6 @@ Set a reusable/pre-authorized Tailscale auth key in `.env`:
 COMPOSE_PROFILES=tailscale
 TS_AUTHKEY=tskey-auth-...
 APP_BASE_URL=https://kindleflow.tail217062.ts.net
-COOKIE_SECURE=true
 ```
 
 The Compose stack starts `tailscale-kindleflow` and loads `tailscale/config/serve.json` so Tailscale HTTPS proxies to the app container on port `3000`. The legacy host-port path still works through `PORT=3060`, but OPDS URLs should use `APP_BASE_URL`.
@@ -313,14 +317,6 @@ The SQLite database is stored at:
 ```text
 /volume2/docker/projects/kindleflow/data/kindleflow.sqlite
 ```
-
-One-time invite codes can be stored at:
-
-```text
-/volume2/docker/projects/kindleflow/data/invite-codes.txt
-```
-
-Put one code per line. When a new user signs up, KindleFlow removes that code from `invite-codes.txt` and appends it to `invite-codes.used.txt` with the signup email and timestamp. If the invite-code file exists but is empty, new signups remain invite-gated and no new account can be created until another code is added.
 
 ## Kindle approved sender
 
