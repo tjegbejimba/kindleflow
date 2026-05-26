@@ -32,8 +32,7 @@ const sendFileToKindleMock = vi.fn(
   ): Promise<{ messageId?: string; response?: string }> => ({ messageId: "test-msg", response: "250 OK" })
 );
 vi.mock("../server/mailer.js", () => ({
-  sendFileToKindle: sendFileToKindleMock,
-  sendLoginCode: vi.fn(async () => {})
+  sendFileToKindle: sendFileToKindleMock
 }));
 
 // Mock the PDF converter so we can assert it is NEVER called from the
@@ -132,12 +131,8 @@ async function setupHarness(): Promise<Harness> {
   const dataDir = path.join(tempDir, "data");
   const store = new AuthStore(path.join(tempDir, "kindleflow.sqlite"));
 
-  // Create + verify a user, set their Kindle email, and enable auto-send.
-  store.createLoginCode("reader@example.com", "secret", "secret");
-  const loginCode = store.createLoginCode("reader@example.com", "__already_invited__", undefined);
-  const sessionToken = store.consumeLoginCode("reader@example.com", loginCode);
-  const user = store.getUserBySession(sessionToken);
-  if (!user) throw new Error("user setup failed");
+  // Create a user, set their Kindle email, and enable auto-send.
+  const user = store.getOrCreateUserByEmail("reader@example.com");
   store.updateUserProfile(user.id, {
     kindleEmail: "reader@kindle.example.com",
     autoSendToKindle: true
@@ -154,10 +149,9 @@ async function setupHarness(): Promise<Harness> {
     port: 0,
     dataDir,
     dbPath: path.join(tempDir, "kindleflow.sqlite"),
-    inviteCodesFile: path.join(tempDir, "invite-codes.txt"),
     appBaseUrl: "http://localhost",
-    cookieSecure: false,
-    sessionTtlDays: 30,
+    authDevBypass: false,
+    authDevEmail: "dev@local",
     smtp: {
       host: "smtp.example.com",
       port: 587,

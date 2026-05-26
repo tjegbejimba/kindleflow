@@ -1,5 +1,4 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import fastifyCookie from "@fastify/cookie";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,25 +7,22 @@ import { registerApiTokenRoutes } from "../server/apiTokenRoutes.js";
 import { createAuthHelpers } from "../server/auth.js";
 import { AuthStore } from "../server/authStore.js";
 
-const SESSION_COOKIE = "kf_session";
+const EMAIL_HEADER = "x-auth-request-email";
 
 let tempDir: string;
 let store: AuthStore;
 let app: FastifyInstance;
 
-async function loginAs(email: string): Promise<{ userId: string; sessionToken: string }> {
-  const code = store.createLoginCode(email, "secret", "secret");
-  const sessionToken = store.consumeLoginCode(email, code);
-  const user = store.getUserBySession(sessionToken)!;
-  return { userId: user.id, sessionToken };
+async function seedUser(email: string): Promise<{ userId: string }> {
+  const user = store.getOrCreateUserByEmail(email);
+  return { userId: user.id };
 }
 
 beforeEach(async () => {
   tempDir = await mkdtemp(path.join(os.tmpdir(), "kindleflow-tokens-"));
   store = new AuthStore(path.join(tempDir, "db.sqlite"));
   app = Fastify();
-  await app.register(fastifyCookie);
-  const auth = createAuthHelpers(store, SESSION_COOKIE);
+  const auth = createAuthHelpers(store);
   registerApiTokenRoutes(app, store, auth);
 
   // A test-only echo endpoint for the bearer-auth path.
@@ -41,14 +37,14 @@ afterEach(async () => {
 });
 
 describe("API token routes", () => {
-  it("mints, lists, and revokes tokens for the cookie-authenticated user", async () => {
-    const { sessionToken } = await loginAs("tj@example.com");
-    const cookie = `${SESSION_COOKIE}=${sessionToken}`;
+  it("mints, lists, and revokes tokens for the header-authenticated user", async () => {
+    const { userId } = await seedUser("tj@example.com");
+    const headers = { [EMAIL_HEADER]: "tj@example.com", "content-type": "application/json" };
 
     const create = await app.inject({
       method: "POST",
       url: "/api/tokens",
-      headers: { cookie, "content-type": "application/json" },
+      headers,
       payload: { name: "Laptop CLI" }
     });
     expect(create.statusCode).toBe(200);
@@ -56,7 +52,7 @@ describe("API token routes", () => {
     expect(created.name).toBe("Laptop CLI");
     expect(created.token).toMatch(/^kf_pat_/);
 
-    const list = await app.inject({ method: "GET", url: "/api/tokens", headers: { cookie } });
+    const list = await app.inject({ method: "GET", url: "/api/tokens", headers: { [EMAIL_HEADER]: "tj@example.com" } });
     expect(list.statusCode).toBe(200);
     expect(list.json().tokens).toHaveLength(1);
     expect(list.json().tokens[0]).not.toHaveProperty("token");
@@ -64,28 +60,30 @@ describe("API token routes", () => {
     const revoke = await app.inject({
       method: "DELETE",
       url: `/api/tokens/${created.id}`,
-      headers: { cookie }
+      headers: { [EMAIL_HEADER]: "tj@example.com" }
     });
     expect(revoke.statusCode).toBe(200);
-    expect((await app.inject({ method: "GET", url: "/api/tokens", headers: { cookie } })).json().tokens).toHaveLength(
-      0
-    );
+    expect(
+      (await app.inject({ method: "GET", url: "/api/tokens", headers: { [EMAIL_HEADER]: "tj@example.com" } })).json()
+        .tokens
+    ).toHaveLength(0);
 
     const revokeAgain = await app.inject({
       method: "DELETE",
       url: `/api/tokens/${created.id}`,
-      headers: { cookie }
+      headers: { [EMAIL_HEADER]: "tj@example.com" }
     });
     expect(revokeAgain.statusCode).toBe(404);
+    // Sanity: userId is the same person across calls.
+    expect(userId).toBeTruthy();
   });
 
   it("requires a valid name", async () => {
-    const { sessionToken } = await loginAs("tj@example.com");
-    const cookie = `${SESSION_COOKIE}=${sessionToken}`;
+    await seedUser("tj@example.com");
     const noName = await app.inject({
       method: "POST",
       url: "/api/tokens",
-      headers: { cookie, "content-type": "application/json" },
+      headers: { [EMAIL_HEADER]: "tj@example.com", "content-type": "application/json" },
       payload: {}
     });
     expect(noName.statusCode).toBe(400);
@@ -93,21 +91,20 @@ describe("API token routes", () => {
     const blank = await app.inject({
       method: "POST",
       url: "/api/tokens",
-      headers: { cookie, "content-type": "application/json" },
+      headers: { [EMAIL_HEADER]: "tj@example.com", "content-type": "application/json" },
       payload: { name: "   " }
     });
     expect(blank.statusCode).toBe(400);
   });
 
-  it("requires a cookie session and rejects bearer tokens (carve-out)", async () => {
-    const { sessionToken, userId } = await loginAs("tj@example.com");
-    const cookie = `${SESSION_COOKIE}=${sessionToken}`;
+  it("requires browser (header) auth and rejects bearer tokens (carve-out)", async () => {
+    const { userId } = await seedUser("tj@example.com");
 
-    // Mint a PAT through the cookie flow.
+    // Mint a PAT through the header-auth flow.
     const create = await app.inject({
       method: "POST",
       url: "/api/tokens",
-      headers: { cookie, "content-type": "application/json" },
+      headers: { [EMAIL_HEADER]: "tj@example.com", "content-type": "application/json" },
       payload: { name: "Laptop CLI" }
     });
     const pat = create.json().token.token as string;
@@ -116,7 +113,7 @@ describe("API token routes", () => {
     const noAuth = await app.inject({ method: "GET", url: "/api/tokens" });
     expect(noAuth.statusCode).toBe(401);
 
-    // Bearer-only → 401 because /api/tokens is cookie-only.
+    // Bearer-only → 401 because /api/tokens is browser-only.
     const bearerList = await app.inject({
       method: "GET",
       url: "/api/tokens",
@@ -150,12 +147,11 @@ describe("API token routes", () => {
   });
 
   it("rejects a revoked token on the next bearer request", async () => {
-    const { sessionToken } = await loginAs("tj@example.com");
-    const cookie = `${SESSION_COOKIE}=${sessionToken}`;
+    await seedUser("tj@example.com");
     const create = await app.inject({
       method: "POST",
       url: "/api/tokens",
-      headers: { cookie, "content-type": "application/json" },
+      headers: { [EMAIL_HEADER]: "tj@example.com", "content-type": "application/json" },
       payload: { name: "Temp" }
     });
     const tokenId = create.json().token.id as string;
@@ -168,7 +164,11 @@ describe("API token routes", () => {
     });
     expect(before.statusCode).toBe(200);
 
-    await app.inject({ method: "DELETE", url: `/api/tokens/${tokenId}`, headers: { cookie } });
+    await app.inject({
+      method: "DELETE",
+      url: `/api/tokens/${tokenId}`,
+      headers: { [EMAIL_HEADER]: "tj@example.com" }
+    });
 
     const after = await app.inject({
       method: "GET",
@@ -187,15 +187,24 @@ describe("API token routes", () => {
     expect(after.statusCode).toBe(401);
   });
 
-  it("prefers a valid cookie over an invalid bearer token", async () => {
-    const { sessionToken, userId } = await loginAs("tj@example.com");
-    const cookie = `${SESSION_COOKIE}=${sessionToken}`;
-    const res = await app.inject({
+  it("prefers a valid bearer over a missing header, and a valid header is enough on its own", async () => {
+    const { userId } = await seedUser("tj@example.com");
+    const pat = store.createApiToken(userId, "cli").token;
+
+    const bearerRes = await app.inject({
       method: "GET",
       url: "/test/me",
-      headers: { cookie, authorization: "Bearer kf_pat_garbage" }
+      headers: { authorization: `Bearer ${pat}` }
     });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().id).toBe(userId);
+    expect(bearerRes.statusCode).toBe(200);
+    expect(bearerRes.json().id).toBe(userId);
+
+    const headerRes = await app.inject({
+      method: "GET",
+      url: "/test/me",
+      headers: { [EMAIL_HEADER]: "tj@example.com" }
+    });
+    expect(headerRes.statusCode).toBe(200);
+    expect(headerRes.json().id).toBe(userId);
   });
 });

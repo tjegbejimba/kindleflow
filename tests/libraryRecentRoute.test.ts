@@ -1,5 +1,4 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import fastifyCookie from "@fastify/cookie";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -17,14 +16,12 @@ let pat: string;
 beforeEach(async () => {
   tempDir = await mkdtemp(path.join(os.tmpdir(), "kindleflow-library-"));
   store = new AuthStore(path.join(tempDir, "db.sqlite"));
-  const code = store.createLoginCode("tj@example.com", "secret", "secret");
-  const session = store.consumeLoginCode("tj@example.com", code);
-  userId = store.getUserBySession(session)!.id;
+  const user = store.getOrCreateUserByEmail("tj@example.com");
+  userId = user.id;
   pat = store.createApiToken(userId, "cli").token;
 
   app = Fastify();
-  await app.register(fastifyCookie);
-  const auth = createAuthHelpers(store, "kf_session");
+  const auth = createAuthHelpers(store);
   registerLibraryRecentRoute(app, store, auth);
   await app.ready();
 });

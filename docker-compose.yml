@@ -32,11 +32,15 @@ services:
       PORT: 3000
       DATA_DIR: /app/data
       DB_PATH: /app/data/kindleflow.sqlite
-      INVITE_CODES_FILE: /app/data/invite-codes.txt
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
-      INVITE_CODE: ${INVITE_CODE:-}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-180}
+      # Auth: header-trust only. The container must sit behind a reverse proxy
+      # that injects X-Auth-Request-Email. Remove the host port binding above
+      # once Caddy / Tinyauth is in front, so the only way to reach KindleFlow
+      # is through the trusted proxy.
+      NODE_ENV: ${NODE_ENV:-production}
+      AUTH_DEV_BYPASS: ${AUTH_DEV_BYPASS:-false}
+      AUTH_DEV_EMAIL: ${AUTH_DEV_EMAIL:-dev@kindleflow.local}
+      AUTH_TRUSTED_PROXY_SECRET: ${AUTH_TRUSTED_PROXY_SECRET:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURE: ${SMTP_SECURE:-false}

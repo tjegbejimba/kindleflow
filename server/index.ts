@@ -1,4 +1,3 @@
-import fastifyCookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { createReadStream } from "node:fs";
@@ -11,29 +10,42 @@ import { createAuthHelpers } from "./auth.js";
 import { AuthStore, type KindleDelivery, type LibraryItem, type UserProfile } from "./authStore.js";
 import { importRenderedArticle } from "./articleImport.js";
 import { fetchAndExtractArticle } from "./articleFetcher.js";
-import { isEmailDeliveryEnabled, loadConfig, type SmtpConfig } from "./config.js";
+import { isAuthDevBypassActive, isEmailDeliveryEnabled, loadConfig, type SmtpConfig } from "./config.js";
 import { fetchFeed } from "./feed.js";
-import { FileInviteCodes } from "./inviteCodes.js";
 import { generateKindleFile, saveKindlePdf } from "./kindleFile.js";
 import { registerLibraryRecentRoute } from "./libraryRecentRoute.js";
-import { sendFileToKindle, sendLoginCode } from "./mailer.js";
+import { sendFileToKindle } from "./mailer.js";
 import { renderOpdsAcquisitionFeed, renderOpdsNavigationFeed } from "./opds.js";
 import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionPoller.js";
 import { shouldAutoSendPdf } from "./pdfAnalyzer.js";
 
 const config = loadConfig();
 const app = Fastify({ logger: true });
-const store = new AuthStore(config.dbPath, { sessionTtlMs: daysToMs(config.sessionTtlDays) });
-const inviteCodes = new FileInviteCodes(config.inviteCodesFile);
+const store = new AuthStore(config.dbPath);
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const clientDist = path.join(projectRoot, "client", "dist");
-const SESSION_COOKIE = "kf_session";
 const MAX_IMPORTED_HTML_BYTES = 5 * 1024 * 1024;
-const auth = createAuthHelpers(store, SESSION_COOKIE);
+const devBypassActive = isAuthDevBypassActive(config);
+const auth = createAuthHelpers(store, {
+  trustedProxySecret: config.trustedProxySecret,
+  devBypass: devBypassActive ? { active: true, email: config.authDevEmail } : undefined
+});
+
+if (process.env.NODE_ENV === "production" && !config.trustedProxySecret) {
+  app.log.warn(
+    "AUTH_TRUSTED_PROXY_SECRET is not set. KindleFlow trusts X-Auth-Request-* headers " +
+      "from any client that can reach it. Ensure this container is only reachable through " +
+      "your trusted reverse proxy (Tinyauth/Caddy on a private Docker network)."
+  );
+}
+if (devBypassActive) {
+  app.log.warn(
+    `AUTH_DEV_BYPASS is active. All unauthenticated requests are treated as ${config.authDevEmail}. ` +
+      "This must never run in production."
+  );
+}
 
 await mkdir(config.dataDir, { recursive: true });
-
-await app.register(fastifyCookie);
 
 await app.register(fastifyStatic, {
   root: config.dataDir,
@@ -59,62 +71,15 @@ try {
 
 app.get("/api/config", async () => ({
   emailDeliveryEnabled: isEmailDeliveryEnabled(config),
-  inviteRequired: await inviteCodes.hasInviteRequirement(config.inviteCode),
   authRequired: true,
+  authMode: "header-trust" as const,
+  authDevBypassActive: devBypassActive,
   kindleApprovedSender: config.smtp?.from,
   kindleSettingsUrl: "https://www.amazon.com/hz/mycd/myx#/home/settings/payment"
 }));
 
-app.post("/api/auth/request-code", async (request) => {
-  const body = request.body as { email?: unknown; inviteCode?: unknown };
-  if (typeof body.email !== "string") {
-    throw new Error("Email is required.");
-  }
-
-  if (!config.smtp) {
-    const error = new Error("Email delivery is not configured. Set SMTP_HOST and SMTP_FROM before logging in.");
-    Object.assign(error, { statusCode: 400 });
-    throw error;
-  }
-
-  if (!store.userExists(body.email)) {
-    await inviteCodes.consume(
-      typeof body.inviteCode === "string" ? body.inviteCode : undefined,
-      body.email,
-      config.inviteCode
-    );
-  }
-
-  const code = store.createLoginCode(body.email, "__already_invited__", undefined);
-  await sendLoginCode(config.smtp, body.email, code);
-  return { sent: true };
-});
-
-app.post("/api/auth/verify-code", async (request, reply) => {
-  const body = request.body as { email?: unknown; code?: unknown };
-  if (typeof body.email !== "string" || typeof body.code !== "string") {
-    throw new Error("Email and login code are required.");
-  }
-
-  const sessionToken = store.consumeLoginCode(body.email, body.code);
-  reply.setCookie(SESSION_COOKIE, sessionToken, sessionCookieOptions(config.cookieSecure, config.sessionTtlDays));
-  return { user: store.getUserBySession(sessionToken) };
-});
-
-app.post("/api/auth/logout", async (request, reply) => {
-  store.destroySession(request.cookies[SESSION_COOKIE]);
-  reply.clearCookie(SESSION_COOKIE, { path: "/" });
-  return { loggedOut: true };
-});
-
-app.get("/api/me", async (request, reply) => {
-  const sessionToken = request.cookies[SESSION_COOKIE];
-  const user = store.getUserBySession(sessionToken);
-  if (user && sessionToken) {
-    store.refreshSession(sessionToken);
-    reply.setCookie(SESSION_COOKIE, sessionToken, sessionCookieOptions(config.cookieSecure, config.sessionTtlDays));
-  }
-  return { user };
+app.get("/api/me", async (request) => {
+  return { user: auth.getCurrentUser(request) };
 });
 
 app.patch("/api/me", async (request) => {
@@ -708,20 +673,6 @@ async function finishKindleDelivery(delivery: KindleDelivery, smtp: SmtpConfig):
 
 function sendOpdsXml(reply: FastifyReply, xml: string) {
   return reply.type("application/atom+xml;profile=opds-catalog").send(xml);
-}
-
-function sessionCookieOptions(secure: boolean, ttlDays: number) {
-  return {
-    path: "/",
-    httpOnly: true,
-    sameSite: "lax" as const,
-    secure,
-    maxAge: ttlDays * 24 * 60 * 60
-  };
-}
-
-function daysToMs(days: number): number {
-  return days * 24 * 60 * 60 * 1000;
 }
 
 function isAllowedKindleFilename(filename: string): boolean {
