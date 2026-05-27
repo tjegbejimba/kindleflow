@@ -679,6 +679,77 @@ function App() {
             </div>
           </section>
 
+          <form className="card url-form" onSubmit={fetchArticle}>
+            <label htmlFor="article-url">Article URL</label>
+            <p className="muted">
+              Works best for public articles. For paid Substack posts, use the browser extension so KindleFlow can import
+              the article from your logged-in browser session.
+            </p>
+            <div className="input-row">
+              <input
+                id="article-url"
+                type="url"
+                placeholder="https://example.com/great-post"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                required
+              />
+              <button type="submit" disabled={isBusy}>
+                {busyAction === "fetch" ? "Fetching..." : "Fetch article"}
+              </button>
+            </div>
+          </form>
+
+          {result && result.kind === "article" ? (
+            <section className="card preview">
+              <div className="preview-heading">
+                <div>
+                  <p className="eyebrow">{result.article.siteName ?? new URL(result.sourceUrl).hostname}</p>
+                  <h2>{result.article.title}</h2>
+                  {result.article.byline ? <p className="byline">{result.article.byline}</p> : null}
+                </div>
+                <button type="button" onClick={generateFile} disabled={isBusy}>
+                  {busyAction === "generate" ? "Generating..." : "Generate EPUB"}
+                </button>
+              </div>
+
+              <article className="article-body" dangerouslySetInnerHTML={{ __html: result.article.contentHtml }} />
+            </section>
+          ) : null}
+
+          {pdfAnalysis ? (
+            <section className="card pdf-analysis">
+              <div>
+                <p className="eyebrow">PDF Analysis</p>
+                <h3>{getVerdictLabel(pdfAnalysis.verdict)}</h3>
+                <ul className="analysis-reasons">
+                  {pdfAnalysis.reasons.map((reason, index) => (
+                    <li key={index}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+          ) : null}
+
+          {generatedFile ? (
+            <section className="card actions">
+              <div>
+                <h2>Your {getFileTypeLabel(generatedFile.mimeType)} is ready</h2>
+                <p>{generatedFile.filename}</p>
+              </div>
+              <div className="action-buttons">
+                <a className="button" href={generatedFile.downloadUrl}>
+                  Download {getFileTypeLabel(generatedFile.mimeType)}
+                </a>
+                {config?.emailDeliveryEnabled && user.kindleEmail && !generatedFile.sentToKindle ? (
+                  <button type="button" onClick={sendToKindle} disabled={isBusy}>
+                    {busyAction === "send" ? "Sending..." : "Send to Kindle"}
+                  </button>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
           <section className="card">
             <h2>Kindle settings</h2>
             <p className="muted">
@@ -756,50 +827,9 @@ function App() {
                 {busyAction === "latestDelivery" ? "Sending latest..." : "Send latest EPUB now"}
               </button>
             </div>
-            <p className="muted">
-              Delivery history shows whether Gmail accepted the message. Amazon can still reject it later if the sender is
-              not approved or the Kindle address is wrong.
-            </p>
           </section>
 
           <ApiTokensCard />
-
-          <section className="card">
-            <div className="preview-heading">
-              <div>
-                <h2>Kindle delivery history</h2>
-                <p className="muted">Recent send attempts, SMTP responses, and errors for Kindle email delivery.</p>
-              </div>
-              <button type="button" className="secondary" onClick={loadDeliveries} disabled={isBusy}>
-                Refresh
-              </button>
-            </div>
-            {deliveries.length > 0 ? (
-              <div className="delivery-list">
-                {deliveries.map((delivery) => (
-                  <article className={`delivery delivery-${delivery.status}`} key={delivery.id}>
-                    <div>
-                      <strong>{delivery.title}</strong>
-                      <span>{delivery.filename}</span>
-                      <small>
-                        {deliveryStatusLabel(delivery)} · {delivery.trigger} · {formatDate(delivery.updatedAt)}
-                      </small>
-                      {delivery.response ? <small>SMTP: {delivery.response}</small> : null}
-                      {delivery.messageId ? <small>Message ID: {delivery.messageId}</small> : null}
-                      {delivery.error ? <small className="delivery-error">Error: {delivery.error}</small> : null}
-                    </div>
-                    {delivery.status === "failed" ? (
-                      <button type="button" onClick={() => retryDelivery(delivery.id)} disabled={isBusy}>
-                        {busyAction === "retryDelivery" ? "Retrying..." : "Retry"}
-                      </button>
-                    ) : null}
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <p className="muted">No Kindle delivery attempts yet.</p>
-            )}
-          </section>
 
           <section className="card">
             <h2>Reader sync</h2>
@@ -823,77 +853,6 @@ function App() {
               KOReader path: OPDS catalog → add catalog → paste this URL → open Recent or Subscriptions → download EPUBs.
             </p>
           </section>
-
-          <form className="card url-form" onSubmit={fetchArticle}>
-            <label htmlFor="article-url">Article URL</label>
-            <p className="muted">
-              Works best for public articles. For paid Substack posts, use the browser extension so KindleFlow can import
-              the article from your logged-in browser session.
-            </p>
-            <div className="input-row">
-              <input
-                id="article-url"
-                type="url"
-                placeholder="https://example.com/great-post"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                required
-              />
-              <button type="submit" disabled={isBusy}>
-                {busyAction === "fetch" ? "Fetching..." : "Fetch article"}
-              </button>
-            </div>
-          </form>
-
-          {result && result.kind === "article" ? (
-            <section className="card preview">
-              <div className="preview-heading">
-                <div>
-                  <p className="eyebrow">{result.article.siteName ?? new URL(result.sourceUrl).hostname}</p>
-                  <h2>{result.article.title}</h2>
-                  {result.article.byline ? <p className="byline">{result.article.byline}</p> : null}
-                </div>
-                <button type="button" onClick={generateFile} disabled={isBusy}>
-                  {busyAction === "generate" ? "Generating..." : "Generate EPUB"}
-                </button>
-              </div>
-
-              <article className="article-body" dangerouslySetInnerHTML={{ __html: result.article.contentHtml }} />
-            </section>
-          ) : null}
-
-          {pdfAnalysis ? (
-            <section className="card pdf-analysis">
-              <div>
-                <p className="eyebrow">PDF Analysis</p>
-                <h3>{getVerdictLabel(pdfAnalysis.verdict)}</h3>
-                <ul className="analysis-reasons">
-                  {pdfAnalysis.reasons.map((reason, index) => (
-                    <li key={index}>{reason}</li>
-                  ))}
-                </ul>
-              </div>
-            </section>
-          ) : null}
-
-          {generatedFile ? (
-            <section className="card actions">
-              <div>
-                <h2>Your {getFileTypeLabel(generatedFile.mimeType)} is ready</h2>
-                <p>{generatedFile.filename}</p>
-              </div>
-              <div className="action-buttons">
-                <a className="button" href={generatedFile.downloadUrl}>
-                  Download {getFileTypeLabel(generatedFile.mimeType)}
-                </a>
-                {config?.emailDeliveryEnabled && user.kindleEmail && !generatedFile.sentToKindle ? (
-                  <button type="button" onClick={sendToKindle} disabled={isBusy}>
-                    {busyAction === "send" ? "Sending..." : "Send to Kindle"}
-                  </button>
-                ) : null}
-              </div>
-            </section>
-          ) : null}
 
           <section className="card">
             <div className="preview-heading">
@@ -933,6 +892,55 @@ function App() {
               <p className="muted">No subscriptions yet.</p>
             )}
           </section>
+
+          <details className="card delivery-history">
+            <summary>
+              <span className="history-summary-copy">
+                <span className="history-title">Kindle delivery history</span>
+                <span className="muted">Recent send attempts, SMTP responses, and errors.</span>
+              </span>
+              <span className="history-summary-meta">
+                <span className="history-count">{deliveries.length}</span>
+                <span className="history-toggle" aria-hidden="true" />
+              </span>
+            </summary>
+            <div className="delivery-history-content">
+              <div className="preview-heading">
+                <p className="muted">
+                  Delivery history shows whether Gmail accepted the message. Amazon can still reject it later if the
+                  sender is not approved or the Kindle address is wrong.
+                </p>
+                <button type="button" className="secondary" onClick={loadDeliveries} disabled={isBusy}>
+                  Refresh
+                </button>
+              </div>
+              {deliveries.length > 0 ? (
+                <div className="delivery-list">
+                  {deliveries.map((delivery) => (
+                    <article className={`delivery delivery-${delivery.status}`} key={delivery.id}>
+                      <div>
+                        <strong>{delivery.title}</strong>
+                        <span>{delivery.filename}</span>
+                        <small>
+                          {deliveryStatusLabel(delivery)} · {delivery.trigger} · {formatDate(delivery.updatedAt)}
+                        </small>
+                        {delivery.response ? <small>SMTP: {delivery.response}</small> : null}
+                        {delivery.messageId ? <small>Message ID: {delivery.messageId}</small> : null}
+                        {delivery.error ? <small className="delivery-error">Error: {delivery.error}</small> : null}
+                      </div>
+                      {delivery.status === "failed" ? (
+                        <button type="button" onClick={() => retryDelivery(delivery.id)} disabled={isBusy}>
+                          {busyAction === "retryDelivery" ? "Retrying..." : "Retry"}
+                        </button>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">No Kindle delivery attempts yet.</p>
+              )}
+            </div>
+          </details>
         </>
       )}
 

@@ -371,6 +371,71 @@ form > button {
   color: #8a1f12 !important;
 }
 
+.delivery-history summary {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  list-style: none;
+}
+
+.delivery-history summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-summary-copy {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.history-title {
+  color: #1d1a17;
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.history-count {
+  align-items: center;
+  background: #eadccb;
+  border-radius: 999px;
+  color: #1d1a17;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-weight: 800;
+  justify-content: center;
+  min-width: 2rem;
+  padding: 0.35rem 0.7rem;
+}
+
+.history-summary-meta {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 0.6rem;
+}
+
+.history-toggle::before {
+  color: #8a5a24;
+  content: "Show";
+  font-weight: 800;
+}
+
+.delivery-history[open] .history-toggle::before {
+  content: "Hide";
+}
+
+.delivery-history-content {
+  border-top: 1px solid #eadccb;
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.delivery-history-content .preview-heading > .muted {
+  margin: 0;
+}
+
 .subscription-list {
   display: grid;
   gap: 0.75rem;
