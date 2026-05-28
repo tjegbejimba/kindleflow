@@ -38,7 +38,7 @@ function nonEmpty(value: string | undefined): string | undefined {
   return value && value.length > 0 ? value : undefined;
 }
 
-export async function readConfigFile(configPath: string): Promise<Partial<CliConfig>> {
+async function readConfigFile(configPath: string): Promise<Partial<CliConfig>> {
   try {
     const text = await readFile(configPath, "utf8");
     const parsed = parseYaml(text) as Partial<CliConfig> | null;

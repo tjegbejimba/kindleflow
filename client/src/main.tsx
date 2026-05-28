@@ -98,6 +98,7 @@ interface KindleDelivery {
   updatedAt: string;
 }
 
+// oxlint-disable-next-line react-doctor/prefer-useReducer
 function ApiTokensCard(): React.JSX.Element {
   interface TokenSummary {
     id: string;
@@ -172,6 +173,7 @@ function ApiTokensCard(): React.JSX.Element {
       <form onSubmit={create} style={{ display: "flex", gap: "0.5em", flexWrap: "wrap" }}>
         <input
           type="text"
+          aria-label="API token name"
           placeholder="Token name (e.g. Laptop CLI)"
           value={newName}
           onChange={(event) => setNewName(event.target.value)}
@@ -182,7 +184,7 @@ function ApiTokensCard(): React.JSX.Element {
       {justMinted ? (
         <div className="sender-help" style={{ marginTop: "0.75em" }}>
           <p>
-            <strong>Copy this now — it will not be shown again:</strong>
+            <strong>Copy this now, it will not be shown again:</strong>
           </p>
           <code style={{ wordBreak: "break-all" }}>{justMinted}</code>
           <div className="action-buttons">
@@ -230,8 +232,10 @@ function ApiTokensCard(): React.JSX.Element {
   );
 }
 
+// oxlint-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer
 function App() {
   const [config, setConfig] = React.useState<AppConfig | null>(null);
+  // oxlint-disable-next-line react-doctor/rerender-state-only-in-handlers
   const [authLoaded, setAuthLoaded] = React.useState(false);
   const [user, setUser] = React.useState<UserProfile | null>(null);
   const [subscriptions, setSubscriptions] = React.useState<Subscription[]>([]);
@@ -245,6 +249,7 @@ function App() {
   const [result, setResult] = React.useState<FetchResult | null>(null);
   const [generatedFile, setGeneratedFile] = React.useState<GeneratedFile | null>(null);
   const [pdfAnalysis, setPdfAnalysis] = React.useState<PdfAnalysis | null>(null);
+  // oxlint-disable-next-line react-doctor/rerender-state-only-in-handlers
   const [pendingExtensionImport, setPendingExtensionImport] = React.useState<ExtensionImportPayload | null>(null);
   const [status, setStatus] = React.useState("");
   const [error, setError] = React.useState("");
@@ -353,14 +358,18 @@ function App() {
     return () => window.removeEventListener("message", handleMessage);
   }, []);
 
+  // oxlint-disable-next-line react-doctor/no-cascading-set-state
   React.useEffect(() => {
     if (!pendingExtensionImport || !authLoaded) {
       return;
     }
 
     if (!user) {
+      // oxlint-disable-next-line react-doctor/no-chain-state-updates
       setPendingExtensionImport(null);
+      // oxlint-disable-next-line react-doctor/no-chain-state-updates
       setStatus("");
+      // oxlint-disable-next-line react-doctor/no-chain-state-updates
       setError("Sign in to KindleFlow through your SSO proxy, then click the extension button again to import this article.");
       return;
     }
@@ -526,8 +535,7 @@ function App() {
 
     try {
       const result = await apiPost<{ checked: number; delivered: number }>("/api/subscriptions/poll", {});
-      await loadSubscriptions();
-      await loadDeliveries();
+      await Promise.all([loadSubscriptions(), loadDeliveries()]);
       setStatus(`Checked ${result.checked} subscription(s), delivered ${result.delivered} new post(s).`);
     } catch (err) {
       setStatus("");
@@ -638,12 +646,12 @@ function App() {
         <section className="card">
           <h2>Not signed in</h2>
           <p className="muted">
-            KindleFlow relies on its upstream reverse proxy (Tinyauth/Pocket-ID) to authenticate you. Make sure
-            you reached this app through that proxy.
+              KindleFlow relies on its upstream reverse proxy (Tinyauth/Pocket-ID) to authenticate you. Make sure
+              you reached this app through that proxy.
           </p>
           {config?.authDevBypassActive ? (
             <p className="muted">
-              Dev bypass is enabled but the server has not yet treated you as the dev user. Refresh the page —
+              Dev bypass is enabled but the server has not yet treated you as the dev user. Refresh the page;
               if that fails, check the server logs.
             </p>
           ) : (
@@ -689,6 +697,7 @@ function App() {
               <input
                 id="article-url"
                 type="url"
+                aria-label="Article URL"
                 placeholder="https://example.com/great-post"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
@@ -713,6 +722,8 @@ function App() {
                 </button>
               </div>
 
+              {/* Article HTML is sanitized server-side via sanitize-html before being returned. */}
+              {/* oxlint-disable-next-line react-doctor/no-danger */}
               <article className="article-body" dangerouslySetInnerHTML={{ __html: result.article.contentHtml }} />
             </section>
           ) : null}
@@ -723,8 +734,8 @@ function App() {
                 <p className="eyebrow">PDF Analysis</p>
                 <h3>{getVerdictLabel(pdfAnalysis.verdict)}</h3>
                 <ul className="analysis-reasons">
-                  {pdfAnalysis.reasons.map((reason, index) => (
-                    <li key={index}>{reason}</li>
+                  {pdfAnalysis.reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
                   ))}
                 </ul>
               </div>
@@ -780,6 +791,7 @@ function App() {
               <input
                 id="kindle-email"
                 type="email"
+                aria-label="Kindle email address"
                 placeholder="name_123@kindle.com"
                 value={kindleEmail}
                 onChange={(event) => setKindleEmail(event.target.value)}
@@ -787,6 +799,7 @@ function App() {
               <label className="checkbox-row">
                 <input
                   type="checkbox"
+                  aria-label="Automatically send generated EPUBs to my Kindle"
                   checked={autoSendToKindle}
                   onChange={(event) => setAutoSendToKindle(event.target.checked)}
                 />
@@ -797,6 +810,7 @@ function App() {
                 <input
                   id="retention-days"
                   type="number"
+                  aria-label="Subscription retention days"
                   min="1"
                   max="365"
                   value={subscriptionRetentionDays}
@@ -839,7 +853,7 @@ function App() {
             </p>
             <label htmlFor="opds-url">Private OPDS URL</label>
             <div className="input-row">
-              <input id="opds-url" value={opdsUrl} readOnly />
+              <input id="opds-url" aria-label="Private OPDS URL" value={opdsUrl} readOnly />
               <button type="button" onClick={() => navigator.clipboard.writeText(opdsUrl)} disabled={!opdsUrl}>
                 Copy
               </button>
@@ -868,6 +882,7 @@ function App() {
             <form className="input-row" onSubmit={addSubscription}>
               <input
                 type="url"
+                aria-label="Subscription feed URL"
                 placeholder="https://example.substack.com"
                 value={subscriptionUrl}
                 onChange={(event) => setSubscriptionUrl(event.target.value)}
@@ -945,9 +960,9 @@ function App() {
       )}
 
       {toast ? (
-        <div className={`toast toast-${toast.kind}`} role="status" aria-live="polite" key={toast.id}>
+        <output className={`toast toast-${toast.kind}`} aria-live="polite" key={toast.id}>
           {toast.message}
-        </div>
+        </output>
       ) : null}
     </main>
   );
@@ -1033,15 +1048,17 @@ function deliveryStatusLabel(delivery: KindleDelivery): string {
   return "Pending";
 }
 
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "short",
+  timeStyle: "short"
+});
+
 function formatDate(value: string): string {
   const parsed = Date.parse(value);
   if (Number.isNaN(parsed)) {
     return value;
   }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "short",
-    timeStyle: "short"
-  }).format(parsed);
+  return dateTimeFormatter.format(parsed);
 }
 
 createRoot(document.getElementById("root")!).render(

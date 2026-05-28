@@ -114,8 +114,10 @@ export async function saveKindlePdf(options: SaveKindlePdfOptions): Promise<Gene
 }
 
 async function addKindleFlowPdfCover(options: Pick<SaveKindlePdfOptions, "buffer" | "title" | "sourceUrl">): Promise<Buffer> {
-  const sourcePdf = await PDFDocument.load(options.buffer);
-  const outputPdf = await PDFDocument.create();
+  const [sourcePdf, outputPdf] = await Promise.all([
+    PDFDocument.load(options.buffer),
+    PDFDocument.create()
+  ]);
 
   outputPdf.setTitle(options.title);
   outputPdf.setAuthor("KindleFlow");

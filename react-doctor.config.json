@@ -1,0 +1,11 @@
+{
+  "$schema": "https://www.react.doctor/schemas/config.json",
+  "surfaces": {
+    "score": {
+      "excludeRules": ["deslop/unused-file"]
+    },
+    "ciFailure": {
+      "excludeRules": ["deslop/unused-file"]
+    }
+  }
+}

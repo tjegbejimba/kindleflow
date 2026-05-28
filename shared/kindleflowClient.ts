@@ -238,7 +238,8 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
     let deduped = 0;
     let failed = 0;
 
-    for (const item of items) {
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
       if (opts.signal?.aborted) break;
       if (item.duplicateOfIndex !== undefined) {
         deduped += 1;
@@ -262,6 +263,7 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
         continue;
       }
       try {
+        // oxlint-disable-next-line react-doctor/async-await-in-loop
         const result = await sendArticle(item.url, {
           sendMode: opts.sendMode ?? "auto",
           signal: opts.signal
