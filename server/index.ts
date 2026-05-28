@@ -290,12 +290,14 @@ app.post("/api/articles/convert-pdf", async (request) => {
     throw error;
   }
 
-  // Read the PDF from disk
+  // Read the PDF from disk and load the analyzer in parallel
   const pdfPath = path.join(config.dataDir, safeFilename);
-  const pdfBuffer = await readFile(pdfPath);
+  const [pdfBuffer, { analyzePdf }] = await Promise.all([
+    readFile(pdfPath),
+    import("./pdfAnalyzer.js")
+  ]);
 
   // Re-analyze to get the verdict
-  const { analyzePdf } = await import("./pdfAnalyzer.js");
   const analysis = await analyzePdf(pdfBuffer);
 
   // Check if conversion is allowed based on verdict

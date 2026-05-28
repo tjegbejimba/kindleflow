@@ -29,7 +29,7 @@ export interface CommonFlags {
   token?: string;
 }
 
-export async function getClient(deps: CliDeps, flags: CommonFlags): Promise<KindleflowClient> {
+async function getClient(deps: CliDeps, flags: CommonFlags): Promise<KindleflowClient> {
   const resolved = await loadCliConfig({
     flagUrl: flags.url,
     flagToken: flags.token,

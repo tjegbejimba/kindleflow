@@ -45,7 +45,7 @@ export interface SendArticleByUrlDeps {
   sendFileToKindle: typeof sendFileToKindle;
 }
 
-export function isValidSendMode(value: unknown): value is SendMode {
+function isValidSendMode(value: unknown): value is SendMode {
   return value === "auto" || value === "force" || value === "none";
 }
 

@@ -78,7 +78,7 @@ export async function fetchAndExtractArticle(rawUrl: string, options: FetchArtic
       };
     }
 
-    if (contentType && !contentType.includes("html")) {
+    if (contentType && !/html/.test(contentType)) {
       throw new Error("The URL did not return an HTML article or a PDF document.");
     }
 
@@ -167,17 +167,17 @@ async function readLimitedBytes(response: Response, maxBytes: number, label: str
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    totalBytes += value.byteLength;
+  // Sequential by design: streaming bytes must be read in order, not concurrently.
+  for (
+    let result = await reader.read();
+    !result.done;
+    result = await reader.read()
+  ) {
+    totalBytes += result.value.byteLength;
     if (totalBytes > maxBytes) {
       throw new Error(`The ${label} payload is too large.`);
     }
-    chunks.push(value);
+    chunks.push(result.value);
   }
 
   return Buffer.concat(chunks);

@@ -26,7 +26,7 @@ const DEFAULT_EMAIL_HEADER = "x-auth-request-email";
 const DEFAULT_DISPLAY_NAME_HEADER = "x-auth-request-user";
 const DEFAULT_PROXY_SECRET_HEADER = "x-auth-request-proxy-secret";
 
-export function extractBearerToken(authorization: unknown): string | null {
+function extractBearerToken(authorization: unknown): string | null {
   if (typeof authorization !== "string") return null;
   const match = authorization.match(/^Bearer\s+(\S+)$/);
   if (!match) return null;

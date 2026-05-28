@@ -22,7 +22,14 @@ export function parseAdditionalCookieHosts(value: string | undefined): string[] 
     return [];
   }
 
-  return [...new Set(value.split(",").map(normalizeHostname).filter(Boolean))];
+  return [
+    ...new Set(
+      value.split(",").flatMap((entry) => {
+        const normalized = normalizeHostname(entry);
+        return normalized ? [normalized] : [];
+      })
+    )
+  ];
 }
 
 function isDefaultSubstackHost(hostname: string): boolean {

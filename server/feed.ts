@@ -63,24 +63,34 @@ export function parseFeedXml(xml: string): ParsedFeed {
   if (rssItems.length > 0) {
     return {
       feedTitle: text(document.querySelector("channel > title")) || "Untitled feed",
-      items: rssItems.map((item) => ({
-        title: text(item.querySelector("title")) || "Untitled post",
-        url: text(item.querySelector("link")),
-        guid: text(item.querySelector("guid")) || undefined,
-        publishedAt: parseDate(text(item.querySelector("pubDate")))
-      })).filter((item) => item.url)
+      items: rssItems.reduce<ParsedFeed["items"]>((acc, item) => {
+        const url = text(item.querySelector("link"));
+        if (!url) return acc;
+        acc.push({
+          title: text(item.querySelector("title")) || "Untitled post",
+          url,
+          guid: text(item.querySelector("guid")) || undefined,
+          publishedAt: parseDate(text(item.querySelector("pubDate")))
+        });
+        return acc;
+      }, [])
     };
   }
 
   const atomEntries = Array.from(document.querySelectorAll("entry"));
   return {
     feedTitle: text(document.querySelector("feed > title")) || "Untitled feed",
-    items: atomEntries.map((entry) => ({
-      title: text(entry.querySelector("title")) || "Untitled post",
-      url: atomLink(entry),
-      guid: text(entry.querySelector("id")) || undefined,
-      publishedAt: parseDate(text(entry.querySelector("published")) || text(entry.querySelector("updated")))
-    })).filter((item) => item.url)
+    items: atomEntries.reduce<ParsedFeed["items"]>((acc, entry) => {
+      const url = atomLink(entry);
+      if (!url) return acc;
+      acc.push({
+        title: text(entry.querySelector("title")) || "Untitled post",
+        url,
+        guid: text(entry.querySelector("id")) || undefined,
+        publishedAt: parseDate(text(entry.querySelector("published")) || text(entry.querySelector("updated")))
+      });
+      return acc;
+    }, [])
   };
 }
 

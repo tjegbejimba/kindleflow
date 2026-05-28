@@ -28,21 +28,26 @@ export async function pollSubscriptions(
     .listActiveSubscriptionsWithUsers()
     .filter((subscription) => !userId || subscription.userId === userId);
 
-  let delivered = 0;
-
-  for (const subscription of subscriptions) {
-    try {
-      delivered += await pollSubscription(store, config, subscription, logger);
-      store.markSubscriptionChecked(subscription.id);
-    } catch (error) {
-      logger.warn({ err: error, subscriptionId: subscription.id }, "subscription failed");
-    }
-  }
+  const results = await Promise.all(
+    subscriptions.map(async (subscription) => {
+      try {
+        const count = await pollSubscription(store, config, subscription, logger);
+        store.markSubscriptionChecked(subscription.id);
+        return count;
+      } catch (error) {
+        logger.warn({ err: error, subscriptionId: subscription.id }, "subscription failed");
+        return 0;
+      }
+    })
+  );
+  const delivered = results.reduce((sum, count) => sum + count, 0);
 
   const userIds = new Set(subscriptions.map((subscription) => subscription.userId));
-  for (const currentUserId of userIds) {
-    await deleteGeneratedFiles(config.dataDir, store.pruneDeliveredPostsForUser(currentUserId), logger);
-  }
+  await Promise.all(
+    [...userIds].map((currentUserId) =>
+      deleteGeneratedFiles(config.dataDir, store.pruneDeliveredPostsForUser(currentUserId), logger)
+    )
+  );
 
   // Clean up expired temporary files
   await cleanupExpiredTemporaryFiles(store, config.dataDir, logger);
@@ -85,9 +90,11 @@ async function pollSubscription(
   logger: Pick<FastifyBaseLogger, "info" | "warn" | "error">
 ): Promise<number> {
   const feed = await fetchFeed(subscription.feedUrl, { substackAuth: config.substackAuth });
+  const posts = [...feed.items].reverse();
   let delivered = 0;
 
-  for (const post of [...feed.items].reverse()) {
+  for (let i = 0; i < posts.length; i += 1) {
+    const post = posts[i];
     if (isOlderThanRetention(post.publishedAt, subscription.subscriptionRetentionDays)) {
       continue;
     }
@@ -101,6 +108,7 @@ async function pollSubscription(
       continue;
     }
 
+    // oxlint-disable-next-line react-doctor/async-await-in-loop
     const fetched = await fetchAndExtractArticle(post.url, { substackAuth: config.substackAuth });
     // Subscription PDFs are PDF-only in v1: unattended subscription delivery must not
     // consult fetched.analysis.verdict or call convertPdfToEpub. Manual PDF fetches own
@@ -181,26 +189,28 @@ async function deleteGeneratedFiles(
   logger: Pick<FastifyBaseLogger, "info" | "warn" | "error">
 ): Promise<void> {
   const resolvedDataDir = path.resolve(dataDir);
-  for (const filename of filenames) {
-    const safeFilename = path.basename(filename);
-    if (safeFilename !== filename || !isRetainableFilename(safeFilename)) {
-      logger.warn({ filename }, "skipping unsafe retained file deletion");
-      continue;
-    }
-
-    const absolutePath = path.resolve(resolvedDataDir, safeFilename);
-    if (!absolutePath.startsWith(`${resolvedDataDir}${path.sep}`)) {
-      logger.warn({ filename }, "skipping retained file outside data directory");
-      continue;
-    }
-
-    await unlink(absolutePath).catch((error: unknown) => {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+  await Promise.all(
+    filenames.map(async (filename) => {
+      const safeFilename = path.basename(filename);
+      if (safeFilename !== filename || !isRetainableFilename(safeFilename)) {
+        logger.warn({ filename }, "skipping unsafe retained file deletion");
         return;
       }
-      throw error;
-    });
-  }
+
+      const absolutePath = path.resolve(resolvedDataDir, safeFilename);
+      if (!absolutePath.startsWith(`${resolvedDataDir}${path.sep}`)) {
+        logger.warn({ filename }, "skipping retained file outside data directory");
+        return;
+      }
+
+      await unlink(absolutePath).catch((error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+          return;
+        }
+        throw error;
+      });
+    })
+  );
 }
 
 function isRetainableFilename(filename: string): boolean {
