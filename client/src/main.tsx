@@ -1,5 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { visibleGeneratedFileAfterDelivery } from "./generatedFileVisibility.js";
 import "./styles.css";
 
 interface AppConfig {
@@ -475,7 +476,7 @@ function App() {
         ...result.article,
         sourceUrl: result.sourceUrl
       });
-      setGeneratedFile(response);
+      setGeneratedFile(visibleGeneratedFileAfterDelivery(response));
       await loadDeliveries();
       setStatus(deliveryStatusMessage(response.delivery, "EPUB generated."));
       flashDeliveryToast(response.delivery, "EPUB");
@@ -500,7 +501,9 @@ function App() {
       await loadDeliveries();
       setStatus(deliveryStatusMessage(response.delivery, "Sent to Kindle."));
       flashDeliveryToast(response.delivery, "EPUB");
-      setGeneratedFile({ ...generatedFile, sentToKindle: response.sent, delivery: response.delivery });
+      setGeneratedFile(
+        visibleGeneratedFileAfterDelivery({ ...generatedFile, sentToKindle: response.sent, delivery: response.delivery })
+      );
     } catch (err) {
       setError(errorMessage(err));
       setStatus("");
