@@ -153,7 +153,7 @@ Environment variables:
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `PORT` | No | Host port for Docker Compose; defaults to `3000`. |
+| `PORT` | No | Localhost-only host port for Docker Compose health checks; defaults to `3000`. |
 | `APP_BASE_URL` | Yes | Public/local URL used in OPDS URLs and app links, for example `http://100.104.13.117:3060`. |
 | `AUTH_DEV_BYPASS` | No | When `true` and `NODE_ENV` is `development` or `test`, every unauthenticated request is treated as `AUTH_DEV_EMAIL`. Refuses to start in production. |
 | `AUTH_DEV_EMAIL` | No | Email used by the dev bypass; defaults to `dev@kindleflow.local`. |
@@ -182,6 +182,8 @@ KindleFlow uses **header-trust authentication** — it has no login screen and n
 Unknown emails are JIT-provisioned as new accounts. CLI / MCP usage continues to work via `Authorization: Bearer kf_pat_*` tokens minted in the web UI.
 
 **Spoofing risk:** anyone who can hit the container directly can spoof identity by sending the email header. Always keep KindleFlow on a private Docker network reachable only through the trusted proxy. As an extra layer, set `AUTH_TRUSTED_PROXY_SECRET` and configure the proxy to inject the matching secret header.
+
+The included Docker Compose file is wired for the NAS SSO stack: it attaches the app to the external `proxy-net` network, publishes Caddy labels for `kindleflow.tjegbejimba.com`, imports the shared Tinyauth forward-auth snippet, and binds the direct host port to `127.0.0.1` only.
 
 For local development without a proxy, set `AUTH_DEV_BYPASS=true` and `NODE_ENV=development`. Every request will then be treated as `AUTH_DEV_EMAIL`.
 
