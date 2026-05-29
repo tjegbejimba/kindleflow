@@ -57,9 +57,13 @@ services:
       com.centurylinklabs.watchtower.enable: "false"
       caddy: kindleflow.tjegbejimba.com
       caddy.tls: /etc/caddy/origin.pem /etc/caddy/origin.key
-      caddy.import: "tinyauth_forwarder *"
-      caddy.reverse_proxy: "{{upstreams 3000}}"
-      caddy.reverse_proxy.header_up: "X-Auth-Request-Proxy-Secret ${AUTH_TRUSTED_PROXY_SECRET:-}"
+      caddy.@public_assets.path: "/assets/* /logo.svg /manifest.webmanifest /sw.js"
+      caddy.handle: "@public_assets"
+      caddy.handle.reverse_proxy: "{{upstreams 3000}}"
+      caddy.handle_1: "*"
+      caddy.handle_1.import: "tinyauth_forwarder *"
+      caddy.handle_1.reverse_proxy: "{{upstreams 3000}}"
+      caddy.handle_1.reverse_proxy.header_up: "X-Auth-Request-Proxy-Secret ${AUTH_TRUSTED_PROXY_SECRET:-}"
 
 networks:
   proxy-net:
