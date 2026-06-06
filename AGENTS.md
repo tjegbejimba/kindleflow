@@ -8,14 +8,17 @@ involving the NAS or production data.
 KindleFlow uses **header-trust authentication only**. There is no login UI,
 no email-code flow, no cookie sessions.
 
-- The app trusts `X-Auth-Request-Email` (and optionally `X-Auth-Request-User`
-  for display name) from an upstream reverse proxy (Tinyauth / Caddy /
-  Cloudflare Access).
+- The app trusts `X-Auth-Request-Email` and display name headers from an
+  upstream reverse proxy (Tinyauth / Caddy / Cloudflare Access /
+  `pwa-auth-bridge`). `X-Auth-Request-Name` is preferred when present, with
+  `X-Auth-Request-User` as fallback.
 - Unknown emails are JIT-provisioned as new users.
 - `Authorization: Bearer kf_pat_*` PATs still work end-to-end for CLI and
   MCP. They're issued from the web UI (Settings → API tokens) once the user
   is logged in via the proxy.
 - OPDS uses URL path tokens (`/opds/:token/...`) — bypasses header auth.
+- `/__auth/*` belongs to `pwa-auth-bridge`; the app must not serve the SPA
+  fallback for those paths.
 
 **The container MUST only be reachable through the trusted proxy.** Anyone
 who can hit the container directly can spoof identity by setting the email

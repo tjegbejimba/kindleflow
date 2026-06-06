@@ -1,7 +1,7 @@
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { createReadStream } from "node:fs";
-import { access, mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerApiTokenRoutes } from "./apiTokenRoutes.js";
@@ -10,6 +10,7 @@ import { createAuthHelpers } from "./auth.js";
 import { AuthStore, type KindleDelivery, type LibraryItem, type UserProfile } from "./authStore.js";
 import { importRenderedArticle } from "./articleImport.js";
 import { fetchAndExtractArticle } from "./articleFetcher.js";
+import { registerClientStaticRoutes } from "./clientStaticRoutes.js";
 import { isAuthDevBypassActive, isEmailDeliveryEnabled, loadConfig, type SmtpConfig } from "./config.js";
 import { fetchFeed } from "./feed.js";
 import { generateKindleFile, saveKindlePdf } from "./kindleFile.js";
@@ -55,13 +56,7 @@ await app.register(fastifyStatic, {
 });
 
 try {
-  await access(clientDist);
-  await app.register(fastifyStatic, {
-    root: clientDist,
-    prefix: "/",
-    wildcard: false
-  });
-  app.setNotFoundHandler(async (_request, reply) => reply.sendFile("index.html"));
+  await registerClientStaticRoutes(app, clientDist);
 } catch {
   app.get("/", async () => ({
     name: "KindleFlow",

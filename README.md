@@ -173,17 +173,21 @@ If `SMTP_HOST` or `SMTP_FROM` are missing, KindleFlow cannot deliver files to Ki
 
 ## Authentication
 
-KindleFlow uses **header-trust authentication** — it has no login screen and no email-code flow. The app expects to sit behind a trusted reverse proxy (Tinyauth + Pocket-ID, Caddy `forward_auth`, Cloudflare Access, etc.) that injects identity headers on every authenticated request:
+KindleFlow uses **header-trust authentication** — it has no login screen and no email-code flow. The app expects to sit behind a trusted reverse proxy (Tinyauth + Pocket-ID, `pwa-auth-bridge`, Caddy `forward_auth`, Cloudflare Access, etc.) that injects identity headers on every authenticated request:
 
 - `X-Auth-Request-Email` (required) — user identity.
-- `X-Auth-Request-User` (optional) — display name.
+- `X-Auth-Request-Name` (optional) — preferred display name from `pwa-auth-bridge`.
+- `X-Auth-Request-User` (optional) — fallback display name / username.
+- `X-Auth-Request-Groups` (optional) — accepted from bridge/proxy deployments but not currently used for app authorization.
 - `X-Auth-Request-Proxy-Secret` (required only if `AUTH_TRUSTED_PROXY_SECRET` is set).
 
 Unknown emails are JIT-provisioned as new accounts. CLI / MCP usage continues to work via `Authorization: Bearer kf_pat_*` tokens minted in the web UI.
 
 **Spoofing risk:** anyone who can hit the container directly can spoof identity by sending the email header. Always keep KindleFlow on a private Docker network reachable only through the trusted proxy. As an extra layer, set `AUTH_TRUSTED_PROXY_SECRET` and configure the proxy to inject the matching secret header.
 
-The included Docker Compose file is wired for the NAS SSO stack: it attaches the app to the external `proxy-net` network, publishes Caddy labels for `kindleflow.tjegbejimba.com`, imports the shared Tinyauth forward-auth snippet, and binds the direct host port to `127.0.0.1` only.
+When routing through `pwa-auth-bridge`, Caddy must route `/__auth/*` to the bridge and only reverse-proxy authenticated app traffic to KindleFlow. KindleFlow intentionally does not serve the SPA fallback for `/__auth/*`, so bridge login/logout/switch-user endpoints are not claimed by the app if a proxy route is missing or misordered.
+
+The included Docker Compose file is wired for the legacy NAS SSO labels: it attaches the app to the external `proxy-net` network, publishes Caddy labels for `kindleflow.tjegbejimba.com`, imports the shared Tinyauth forward-auth snippet, and binds the direct host port to `127.0.0.1` only. The current NAS deployment may instead use a static Caddyfile; keep `.env`, `data/`, and `tailscale/state/` intact when syncing code.
 
 For local development without a proxy, set `AUTH_DEV_BYPASS=true` and `NODE_ENV=development`. Every request will then be treated as `AUTH_DEV_EMAIL`.
 

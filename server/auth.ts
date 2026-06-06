@@ -14,6 +14,7 @@ export interface AuthHelpers {
 export interface HeaderTrustOptions {
   emailHeader?: string;
   displayNameHeader?: string;
+  nameHeader?: string;
   proxySecretHeader?: string;
   trustedProxySecret?: string;
   devBypass?: {
@@ -24,6 +25,7 @@ export interface HeaderTrustOptions {
 
 const DEFAULT_EMAIL_HEADER = "x-auth-request-email";
 const DEFAULT_DISPLAY_NAME_HEADER = "x-auth-request-user";
+const DEFAULT_NAME_HEADER = "x-auth-request-name";
 const DEFAULT_PROXY_SECRET_HEADER = "x-auth-request-proxy-secret";
 
 function extractBearerToken(authorization: unknown): string | null {
@@ -47,6 +49,7 @@ function headerValue(request: FastifyRequest, name: string): string | null {
 export function createAuthHelpers(store: AuthStore, options: HeaderTrustOptions = {}): AuthHelpers {
   const emailHeader = (options.emailHeader ?? DEFAULT_EMAIL_HEADER).toLowerCase();
   const displayNameHeader = (options.displayNameHeader ?? DEFAULT_DISPLAY_NAME_HEADER).toLowerCase();
+  const nameHeader = (options.nameHeader ?? DEFAULT_NAME_HEADER).toLowerCase();
   const proxySecretHeader = (options.proxySecretHeader ?? DEFAULT_PROXY_SECRET_HEADER).toLowerCase();
   const trustedProxySecret = options.trustedProxySecret;
   const devBypass = options.devBypass;
@@ -62,9 +65,10 @@ export function createAuthHelpers(store: AuthStore, options: HeaderTrustOptions 
       }
     }
 
-    const displayName = headerValue(request, displayNameHeader);
+    const displayName = headerValue(request, nameHeader) ?? headerValue(request, displayNameHeader);
     try {
-      return store.getOrCreateUserByEmail(email, displayName);
+      const user = store.getOrCreateUserByEmail(email, displayName);
+      return displayName && user.displayName !== displayName ? store.updateTrustedDisplayName(user.id, displayName) : user;
     } catch {
       // Malformed email or other validation error — treat as unauthenticated.
       return null;
