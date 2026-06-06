@@ -175,6 +175,24 @@ export class AuthStore {
     return user;
   }
 
+  updateTrustedDisplayName(userId: string, displayNameInput: string | null | undefined): UserProfile {
+    const displayName = normalizeDisplayName(displayNameInput);
+    if (displayName) {
+      this.db
+        .prepare(
+          `UPDATE users SET display_name = ?, updated_at = datetime('now')
+           WHERE id = ? AND COALESCE(display_name, '') != ?`
+        )
+        .run(displayName, userId, displayName);
+    }
+
+    const user = this.getUserById(userId);
+    if (!user) {
+      throw new Error("User not found.");
+    }
+    return user;
+  }
+
   private findUserProfileByEmail(email: string): UserProfile | null {
     const row = this.db
       .prepare(

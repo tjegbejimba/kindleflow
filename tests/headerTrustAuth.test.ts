@@ -9,6 +9,7 @@ import { loadConfig, isAuthDevBypassActive } from "../server/config.js";
 
 const EMAIL_HEADER = "x-auth-request-email";
 const USER_HEADER = "x-auth-request-user";
+const NAME_HEADER = "x-auth-request-name";
 const PROXY_SECRET_HEADER = "x-auth-request-proxy-secret";
 
 let tempDir: string;
@@ -78,6 +79,40 @@ describe("header-trust auth", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().displayName).toBe("Alice");
+  });
+
+  it("prefers the bridge name header over the user header for display name", async () => {
+    app = await buildApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/protected",
+      headers: {
+        [EMAIL_HEADER]: "alice@example.com",
+        [USER_HEADER]: "alice",
+        [NAME_HEADER]: "Alice Appleseed"
+      }
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().displayName).toBe("Alice Appleseed");
+  });
+
+  it("updates an existing proxy-provisioned display name from the bridge name header", async () => {
+    const existing = store.getOrCreateUserByEmail("alice@example.com", "alice");
+    expect(existing.displayName).toBe("alice");
+    app = await buildApp();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/protected",
+      headers: {
+        [EMAIL_HEADER]: "alice@example.com",
+        [NAME_HEADER]: "Alice Appleseed"
+      }
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().id).toBe(existing.id);
+    expect(res.json().displayName).toBe("Alice Appleseed");
   });
 
   it("returns 401 on protected endpoints when no header is present", async () => {
