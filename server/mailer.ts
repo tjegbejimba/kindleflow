@@ -78,12 +78,15 @@ function sanitizeDisplayFilename(displayName: string, extension: string): string
 
   // Ensure it has the correct extension
   if (!sanitized.toLowerCase().endsWith(extension.toLowerCase())) {
-    // Strip any existing extension and add the correct one
-    const lastDot = sanitized.lastIndexOf(".");
-    if (lastDot > 0) {
-      sanitized = sanitized.substring(0, lastDot);
+    // Check if it has a file extension at the end (1-5 alphanumeric chars after last dot)
+    const fileExtensionPattern = /\.[A-Za-z0-9]{1,5}$/;
+    if (fileExtensionPattern.test(sanitized)) {
+      // Replace the existing extension with the stored one
+      sanitized = sanitized.replace(fileExtensionPattern, extension);
+    } else {
+      // No file extension found - just append the stored extension
+      sanitized = sanitized + extension;
     }
-    sanitized = sanitized + extension;
   }
 
   return sanitized;

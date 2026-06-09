@@ -202,4 +202,52 @@ describe("Display filename for Kindle delivery", () => {
     // validation in sendFileToKindle ensures it reads from dataDir/storedFilename)
     expect(sentMails[0].attachments[0].filename).toBe(displayFilename);
   });
+
+  it("preserves titles with periods when adding extension", async () => {
+    const storedFilename = "uuid-123.epub";
+    const displayFilename = "Mr. Smith's Article"; // No extension, contains period
+    await writeFile(path.join(tempDir, storedFilename), "fake epub content");
+
+    const result = await sendFileToKindle(
+      SMTP,
+      tempDir,
+      storedFilename,
+      "test@kindle.com",
+      displayFilename
+    );
+
+    expect(result).toBeDefined();
+
+    const nodemailer = await import("nodemailer");
+    const sentMails = (nodemailer as any).__getSentMails();
+    expect(sentMails).toHaveLength(1);
+    const sentFilename = sentMails[0].attachments[0].filename;
+    
+    // Should be "Mr. Smith's Article.epub", not "Mr.epub"
+    expect(sentFilename).toBe("Mr. Smith's Article.epub");
+  });
+
+  it("preserves titles with multiple periods", async () => {
+    const storedFilename = "uuid-456.pdf";
+    const displayFilename = "Vol. 2.5 - Q4 Report"; // Multiple periods, no extension
+    await writeFile(path.join(tempDir, storedFilename), "fake pdf content");
+
+    const result = await sendFileToKindle(
+      SMTP,
+      tempDir,
+      storedFilename,
+      "test@kindle.com",
+      displayFilename
+    );
+
+    expect(result).toBeDefined();
+
+    const nodemailer = await import("nodemailer");
+    const sentMails = (nodemailer as any).__getSentMails();
+    expect(sentMails).toHaveLength(1);
+    const sentFilename = sentMails[0].attachments[0].filename;
+    
+    // Should be "Vol. 2.5 - Q4 Report.pdf", not "Vol.pdf" or similar
+    expect(sentFilename).toBe("Vol. 2.5 - Q4 Report.pdf");
+  });
 });
