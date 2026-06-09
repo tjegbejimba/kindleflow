@@ -58,6 +58,10 @@ kindleflow send https://example.com/article --title "Custom"
 # Batch import — newline-delimited URLs; lines beginning with # are ignored
 kindleflow send-batch urls.txt
 
+# Upload a local PDF or EPUB file
+kindleflow send-file document.pdf
+kindleflow send-file book.epub --title "Custom Title"
+
 # Recent imports + delivery status (table on a TTY, JSON when piped)
 kindleflow latest --limit 10
 
@@ -67,6 +71,8 @@ kindleflow retry <deliveryId>
 # Show reachability, auth, SMTP config, recent deliveries
 kindleflow status
 ```
+
+**Supported file types:** PDF and EPUB only. Files must be under 50 MB.
 
 Exit codes: `0` success, `2` auth failure, `3` import/parse failure, `4`
 delivery failure, `5` network unreachable.

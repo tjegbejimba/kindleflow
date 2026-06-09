@@ -280,4 +280,72 @@ export async function runLogin(
   deps.io.exit(EXIT_CODES.SUCCESS);
 }
 
+export async function runSendFile(
+  deps: CliDeps,
+  flags: CommonFlags & { positional: string; title?: string }
+): Promise<void> {
+  const { stat } = await import("node:fs/promises");
+  const { extname } = await import("node:path");
+
+  // Preflight checks
+  let fileStat;
+  try {
+    fileStat = await stat(flags.positional);
+  } catch (err) {
+    deps.io.stderr.write(
+      `error: file does not exist: ${flags.positional}\n`
+    );
+    deps.io.exit(EXIT_CODES.IMPORT);
+  }
+
+  if (fileStat.isDirectory()) {
+    deps.io.stderr.write(
+      `error: path is a directory, not a file: ${flags.positional}\n`
+    );
+    deps.io.exit(EXIT_CODES.IMPORT);
+  }
+
+  const ext = extname(flags.positional).toLowerCase();
+  if (ext !== ".pdf" && ext !== ".epub") {
+    deps.io.stderr.write(
+      `error: unsupported file type. Only PDF and EPUB files are supported.\n`
+    );
+    deps.io.exit(EXIT_CODES.IMPORT);
+  }
+
+  const maxSize = 50 * 1024 * 1024; // 50MB
+  if (fileStat.size > maxSize) {
+    deps.io.stderr.write(
+      `error: file size (${Math.round(fileStat.size / 1024 / 1024)}MB) exceeds 50MB limit\n`
+    );
+    deps.io.exit(EXIT_CODES.IMPORT);
+  }
+
+  const client = await safeRun(deps.io, () => getClient(deps, flags));
+  if (isError(client)) deps.io.exit(client.__error);
+
+  const result = await safeRun(deps.io, () =>
+    (client as KindleflowClient).sendFile(flags.positional, { title: flags.title })
+  );
+  if (isError(result)) deps.io.exit(result.__error);
+
+  const sendResult = result as SendArticleResult;
+  deps.io.stdout.write(formatUploadResult(sendResult) + "\n");
+  deps.io.exit(sendResult.delivery?.status === "failed" ? EXIT_CODES.DELIVERY : EXIT_CODES.SUCCESS);
+}
+
+function formatUploadResult(result: SendArticleResult): string {
+  const parts: string[] = [];
+  parts.push(`uploaded: ${result.title}`);
+  parts.push(`kind=${result.kind}`);
+  if (result.filename) parts.push(`file=${result.filename}`);
+  if (result.delivery) {
+    parts.push(`delivery=${result.delivery.status}`);
+    if (result.delivery.error) parts.push(`delivery-error=${result.delivery.error}`);
+  } else {
+    parts.push("delivery=none");
+  }
+  return parts.join(" | ");
+}
+
 export type BatchEventForTests = BatchEvent;

@@ -8,6 +8,7 @@ import {
   runRetry,
   runSend,
   runSendBatch,
+  runSendFile,
   runStatus,
   type CliDeps,
   type CliIO
@@ -363,6 +364,133 @@ describe("CLI commands", () => {
       );
       expect(code).toBe(EXIT_CODES.AUTH);
       await expect(readFile(configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  describe("send-file", () => {
+    const uploadedPdf: SendArticleResult = {
+      kind: "pdf",
+      libraryItemId: "li1",
+      filename: "upload-xyz.pdf",
+      mimeType: "application/pdf",
+      sourceUrl: "",
+      title: "My Document",
+      deduped: false,
+      delivery: { id: "d1", status: "sent" }
+    };
+
+    it("uploads a local PDF and prints the result", async () => {
+      const pdfPath = path.join(tempDir, "test.pdf");
+      await writeFile(pdfPath, Buffer.from("%PDF-1.4\nfake pdf"));
+      const send = vi.fn().mockResolvedValue(uploadedPdf);
+      const client = makeClient({ sendFile: send } as any);
+      const { io, out } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSendFile(deps, { positional: pdfPath, url: "", token: "" })
+      );
+      expect(code).toBe(0);
+      expect(send).toHaveBeenCalledWith(pdfPath, { title: undefined });
+      const text = out.join("");
+      expect(text).toContain("uploaded: My Document");
+      expect(text).toContain("kind=pdf");
+      expect(text).toContain("file=upload-xyz.pdf");
+      expect(text).toContain("delivery=sent");
+    });
+
+    it("passes --title to the client", async () => {
+      const pdfPath = path.join(tempDir, "test.pdf");
+      await writeFile(pdfPath, Buffer.from("%PDF-1.4\nfake pdf"));
+      const send = vi.fn().mockResolvedValue({ ...uploadedPdf, title: "Custom Title" });
+      const client = makeClient({ sendFile: send } as any);
+      const { io, out } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSendFile(deps, { positional: pdfPath, title: "Custom Title", url: "", token: "" })
+      );
+      expect(code).toBe(0);
+      expect(send).toHaveBeenCalledWith(pdfPath, { title: "Custom Title" });
+      expect(out.join("")).toContain("Custom Title");
+    });
+
+    it("exits 3 when the local file does not exist", async () => {
+      const client = makeClient({ sendFile: vi.fn() } as any);
+      const { io, err } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSendFile(deps, { positional: "/nonexistent/file.pdf", url: "", token: "" })
+      );
+      expect(code).toBe(EXIT_CODES.IMPORT);
+      expect(err.join("")).toMatch(/does not exist|not found/i);
+    });
+
+    it("exits 3 when the path is a directory", async () => {
+      const client = makeClient({ sendFile: vi.fn() } as any);
+      const { io, err } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSendFile(deps, { positional: tempDir, url: "", token: "" })
+      );
+      expect(code).toBe(EXIT_CODES.IMPORT);
+      expect(err.join("")).toMatch(/is a directory|not a file/i);
+    });
+
+    it("exits 3 when the file extension is unsupported", async () => {
+      const txtPath = path.join(tempDir, "doc.txt");
+      await writeFile(txtPath, "plain text");
+      const client = makeClient({ sendFile: vi.fn() } as any);
+      const { io, err } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSendFile(deps, { positional: txtPath, url: "", token: "" })
+      );
+      expect(code).toBe(EXIT_CODES.IMPORT);
+      expect(err.join("")).toMatch(/unsupported|only pdf and epub/i);
+    });
+
+    it("exits 3 when the file is over 50MB", async () => {
+      const bigPath = path.join(tempDir, "big.pdf");
+      await writeFile(bigPath, Buffer.alloc(51 * 1024 * 1024));
+      const client = makeClient({ sendFile: vi.fn() } as any);
+      const { io, err } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSendFile(deps, { positional: bigPath, url: "", token: "" })
+      );
+      expect(code).toBe(EXIT_CODES.IMPORT);
+      expect(err.join("")).toMatch(/50.*mb|too large|size limit/i);
+    });
+
+    it("exits 4 when delivery fails", async () => {
+      const pdfPath = path.join(tempDir, "test.pdf");
+      await writeFile(pdfPath, Buffer.from("%PDF-1.4\nfake pdf"));
+      const client = makeClient({
+        sendFile: vi.fn().mockResolvedValue({
+          ...uploadedPdf,
+          delivery: { id: "d1", status: "failed", error: "smtp timeout" }
+        })
+      } as any);
+      const { io } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSendFile(deps, { positional: pdfPath, url: "", token: "" })
+      );
+      expect(code).toBe(EXIT_CODES.DELIVERY);
+    });
+
+    it("exits 3 when server validation fails", async () => {
+      const pdfPath = path.join(tempDir, "test.pdf");
+      await writeFile(pdfPath, Buffer.from("%PDF-1.4\nfake pdf"));
+      const client = makeClient({
+        sendFile: vi.fn().mockRejectedValue(new KindleflowError("IMPORT", "Invalid file", 422))
+      } as any);
+      const { io, err } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSendFile(deps, { positional: pdfPath, url: "", token: "" })
+      );
+      expect(code).toBe(EXIT_CODES.IMPORT);
+      expect(err.join("")).toContain("Invalid file");
     });
   });
 });
