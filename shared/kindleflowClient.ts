@@ -351,7 +351,26 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
       throw new KindleflowError(code, message, response.status);
     }
 
-    return (await response.json()) as SendArticleResult;
+    const body = (await response.json()) as {
+      libraryItemId: string;
+      storedFilename: string;
+      title: string;
+      mimeType: string;
+      delivery: DeliverySummary | null;
+    };
+
+    // Map server response to SendArticleResult
+    const kind = body.mimeType === "application/pdf" ? "pdf" : "article";
+    return {
+      kind,
+      libraryItemId: body.libraryItemId,
+      filename: body.storedFilename,
+      mimeType: body.mimeType,
+      sourceUrl: "",
+      title: body.title,
+      deduped: false,
+      delivery: body.delivery
+    };
   }
 
   return { sendArticle, sendFile, sendBatch, listRecent, retryDelivery, status };
