@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AuthStore, LibraryItemMimeType } from "./authStore.js";
+import type { AuthStore, KindleDelivery, LibraryItemMimeType } from "./authStore.js";
+import type { SmtpConfig } from "./config.js";
+import { sendFileToKindle } from "./mailer.js";
 
 export interface SaveUploadedFileInput {
   userId: string;
@@ -20,6 +22,21 @@ export interface SaveUploadedFileResult {
   storedFilename: string;
   title: string;
   mimeType: LibraryItemMimeType;
+}
+
+export interface SendUploadedFileOptions {
+  dataDir: string;
+  store: AuthStore;
+  smtp?: SmtpConfig;
+  kindleEmail?: string;
+}
+
+export interface SendUploadedFileResult {
+  libraryItemId: string;
+  storedFilename: string;
+  title: string;
+  mimeType: LibraryItemMimeType;
+  delivery: KindleDelivery | null;
 }
 
 export async function saveUploadedFile(
@@ -117,4 +134,63 @@ function slugify(value: string): string {
     .slice(0, 80);
 
   return slug || "upload";
+}
+
+export async function sendUploadedFile(
+  input: SaveUploadedFileInput,
+  options: SendUploadedFileOptions
+): Promise<SendUploadedFileResult> {
+  // First, save the file
+  const saved = await saveUploadedFile(input, options);
+
+  // Decide whether to attempt delivery
+  const shouldDeliver = Boolean(options.smtp && options.kindleEmail);
+
+  if (!shouldDeliver) {
+    return {
+      ...saved,
+      delivery: null
+    };
+  }
+
+  // Create delivery record
+  const delivery = options.store.createKindleDelivery(input.userId, {
+    libraryItemId: saved.libraryItemId,
+    title: saved.title,
+    filename: saved.storedFilename,
+    kindleEmail: options.kindleEmail!,
+    trigger: "upload"
+  });
+
+  // Attempt to send
+  try {
+    const result = await sendFileToKindle(
+      options.smtp!,
+      options.dataDir,
+      saved.storedFilename,
+      options.kindleEmail!,
+      saved.title + path.extname(saved.storedFilename)
+    );
+
+    const sentDelivery = options.store.recordKindleDeliveryResult(delivery.id, {
+      status: "sent",
+      messageId: result.messageId,
+      response: result.response
+    });
+
+    return {
+      ...saved,
+      delivery: sentDelivery
+    };
+  } catch (error) {
+    const failedDelivery = options.store.recordKindleDeliveryResult(delivery.id, {
+      status: "failed",
+      error: error instanceof Error ? error.message : "Upload delivery failed."
+    });
+
+    return {
+      ...saved,
+      delivery: failedDelivery
+    };
+  }
 }

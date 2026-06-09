@@ -552,7 +552,7 @@ startDailySubscriptionPoller(store, config, app.log);
 
 registerApiTokenRoutes(app, store, auth);
 registerLibraryRecentRoute(app, store, auth);
-await registerFileUploadRoute(app, config.dataDir, store, auth);
+await registerFileUploadRoute(app, config.dataDir, store, auth, config.smtp);
 registerSendUrlRoute(
   app,
   {

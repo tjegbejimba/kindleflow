@@ -2,13 +2,15 @@ import fastifyMultipart from "@fastify/multipart";
 import type { FastifyInstance } from "fastify";
 import type { AuthHelpers } from "./auth.js";
 import type { AuthStore } from "./authStore.js";
-import { saveUploadedFile } from "./fileUpload.js";
+import type { SmtpConfig } from "./config.js";
+import { sendUploadedFile } from "./fileUpload.js";
 
 export async function registerFileUploadRoute(
   app: FastifyInstance,
   dataDir: string,
   store: AuthStore,
-  auth: AuthHelpers
+  auth: AuthHelpers,
+  smtp?: SmtpConfig
 ): Promise<void> {
   await app.register(fastifyMultipart, {
     limits: {
@@ -29,24 +31,30 @@ export async function registerFileUploadRoute(
       }
 
       const fileBuffer = await data.toBuffer();
-      const titleField = data.fields.title;
+      const titleField = data.fields.title as { value: string } | undefined;
       const title = titleField && typeof titleField.value === "string" ? titleField.value : undefined;
 
-      const result = await saveUploadedFile(
+      const result = await sendUploadedFile(
         {
           userId: user.id,
           fileBuffer,
           originalFilename: data.filename,
           title
         },
-        { dataDir, store }
+        { dataDir, store, smtp, kindleEmail: user.kindleEmail }
       );
 
       return reply.send({
         libraryItemId: result.libraryItemId,
         storedFilename: result.storedFilename,
         title: result.title,
-        mimeType: result.mimeType
+        mimeType: result.mimeType,
+        delivery: result.delivery ? {
+          id: result.delivery.id,
+          status: result.delivery.status,
+          trigger: result.delivery.trigger,
+          error: result.delivery.error
+        } : null
       });
     } catch (error) {
       if (error instanceof Error) {

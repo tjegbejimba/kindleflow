@@ -61,7 +61,7 @@ export interface KindleDelivery {
   title: string;
   filename: string;
   kindleEmail: string;
-  trigger: "auto" | "manual" | "subscription" | "test" | "retry";
+  trigger: "auto" | "manual" | "subscription" | "test" | "retry" | "upload";
   status: "pending" | "sent" | "failed";
   attempts: number;
   messageId?: string;
