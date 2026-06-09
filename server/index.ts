@@ -19,6 +19,7 @@ import { sendFileToKindle } from "./mailer.js";
 import { renderOpdsAcquisitionFeed, renderOpdsNavigationFeed } from "./opds.js";
 import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionPoller.js";
 import { shouldAutoSendPdf } from "./pdfAnalyzer.js";
+import { registerFileUploadRoute } from "./fileUploadRoute.js";
 
 const config = loadConfig();
 const app = Fastify({ logger: true });
@@ -551,6 +552,7 @@ startDailySubscriptionPoller(store, config, app.log);
 
 registerApiTokenRoutes(app, store, auth);
 registerLibraryRecentRoute(app, store, auth);
+await registerFileUploadRoute(app, config.dataDir, store, auth);
 registerSendUrlRoute(
   app,
   {
