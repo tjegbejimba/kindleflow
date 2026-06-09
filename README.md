@@ -10,6 +10,7 @@ Self-hosted article-to-Kindle app for personal use. Paste a public article URL o
 - Sanitized article preview and EPUB content
 - EPUB generation into a persistent data directory
 - Generated local PNG covers embedded in each EPUB for nicer Kindle library thumbnails
+- **Upload local PDF and EPUB files** — send downloaded documents to Kindle or save to library
 - Header-trust authentication: pluggable behind any reverse proxy (Tinyauth, Caddy `forward_auth`, Cloudflare Access)
 - Per-user Kindle email settings and automatic EPUB delivery
 - Kindle delivery history with SMTP response logging, test sends, latest-EPUB sends, and failed-send retry
@@ -114,6 +115,45 @@ Personal tokens (`kf_pat_…`) get full account access on every endpoint
 **except** `/api/tokens*`, which stays browser-only — you always have to come
 back to the web UI (through your SSO proxy) to mint or revoke tokens. Revoke
 a token from the web UI to immediately invalidate any CLI / MCP client using it.
+
+## Web app usage
+
+Open the KindleFlow web app and sign in through your configured reverse proxy (Tinyauth, `pwa-auth-bridge`, Caddy `forward_auth`, etc.).
+
+### Sending article URLs
+
+1. Paste a public article URL into the main input field.
+2. Click "Fetch article."
+3. Preview the extracted article content.
+4. Click "Generate EPUB" to create a Kindle-friendly file.
+5. Download the EPUB or let KindleFlow auto-send it to your Kindle email address if you've configured SMTP and Kindle delivery.
+
+### Uploading local PDF or EPUB files
+
+Below the article URL flow, you'll find the **Upload local PDF or EPUB** card. Use this to send files you already have on your device:
+
+1. Click "Choose file" to select a PDF or EPUB file.
+2. Optionally override the title (defaults to the filename without extension).
+3. Click "Upload file."
+
+**Behavior:**
+
+- Accepts PDF and EPUB files only, up to 50 MB.
+- The file is saved exactly as-is to your KindleFlow library — no modifications are made.
+- If SMTP and your Kindle email are configured, KindleFlow attempts delivery immediately.
+- If delivery setup is missing, the file is still saved and appears in Recent and your private OPDS catalog — you can download it manually or set up delivery later.
+- Uploaded files appear in Recent library items and OPDS alongside generated articles and subscriptions.
+- You can retry failed deliveries from the delivery history panel.
+
+**Setup requirements:**
+
+- **Kindle email**: Set your `@kindle.com` address in Settings.
+- **SMTP sender**: The app uses the global `SMTP_FROM` configured by the admin — you don't configure SMTP per-user.
+- **Amazon approval**: Add `SMTP_FROM` to your Amazon "Approved Personal Document E-mail List" (link in Settings).
+
+If SMTP or your Kindle email is missing, KindleFlow shows a warning and skips delivery, but the file remains in your library for manual download or OPDS sync.
+
+**Note:** SMTP providers may reject messages even under the 50 MB file size limit due to email encoding overhead or provider-specific attachment limits. If delivery fails, the file stays in your library and you can retry after checking provider logs or switching to a different SMTP relay.
 
 ## Local development
 
