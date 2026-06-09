@@ -40,6 +40,11 @@ export interface SendArticleOptions {
   signal?: AbortSignal;
 }
 
+export interface SendFileOptions {
+  title?: string;
+  signal?: AbortSignal;
+}
+
 export interface DeliverySummary {
   id: string;
   status: "pending" | "sent" | "failed";
@@ -101,6 +106,7 @@ export interface StatusResult {
 
 export interface KindleflowClient {
   sendArticle(url: string, opts?: SendArticleOptions): Promise<SendArticleResult>;
+  sendFile(filePath: string, opts?: SendFileOptions): Promise<SendArticleResult>;
   sendBatch(urls: string[], opts?: SendBatchOptions): AsyncIterable<BatchEvent>;
   listRecent(limit?: number): Promise<RecentItem[]>;
   retryDelivery(deliveryId: string): Promise<DeliveryRow>;
@@ -298,7 +304,76 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
     yield { type: "done", total: urls.length, sent, deduped, failed };
   }
 
-  return { sendArticle, sendBatch, listRecent, retryDelivery, status };
+  async function sendFile(filePath: string, opts: SendFileOptions = {}): Promise<SendArticleResult> {
+    // Dynamic import for Node.js-only modules
+    const { readFile, stat } = await import("node:fs/promises");
+    const { basename } = await import("node:path");
+
+    // Read file
+    const fileBuffer = await readFile(filePath);
+    const filename = basename(filePath);
+
+    // Create FormData
+    const FormDataImpl = globalThis.FormData ?? (await import("undici")).FormData;
+    const formData = new FormDataImpl();
+    const blob = new Blob([fileBuffer], { type: "application/octet-stream" });
+    formData.append("file", blob, filename);
+    if (opts.title) {
+      formData.append("title", opts.title);
+    }
+
+    // Upload
+    const url = `${baseUrl}/api/files/upload`;
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${cfg.token}`
+        },
+        body: formData as any,
+        signal: opts.signal
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw err;
+      }
+      throw new KindleflowError(
+        "NETWORK",
+        `Could not reach KindleFlow at ${baseUrl}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => "");
+      const message = extractMessage(errBody) ?? `HTTP ${response.status}`;
+      const code = mapStatusToCode(response.status, message);
+      throw new KindleflowError(code, message, response.status);
+    }
+
+    const body = (await response.json()) as {
+      libraryItemId: string;
+      storedFilename: string;
+      title: string;
+      mimeType: string;
+      delivery: DeliverySummary | null;
+    };
+
+    // Map server response to SendArticleResult
+    const kind = body.mimeType === "application/pdf" ? "pdf" : "article";
+    return {
+      kind,
+      libraryItemId: body.libraryItemId,
+      filename: body.storedFilename,
+      mimeType: body.mimeType,
+      sourceUrl: "",
+      title: body.title,
+      deduped: false,
+      delivery: body.delivery
+    };
+  }
+
+  return { sendArticle, sendFile, sendBatch, listRecent, retryDelivery, status };
 }
 
 function normaliseUrl(raw: string): string {

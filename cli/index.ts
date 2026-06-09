@@ -7,6 +7,7 @@ import {
   runRetry,
   runSend,
   runSendBatch,
+  runSendFile,
   runStatus,
   type CliDeps
 } from "./commands.js";
@@ -42,6 +43,20 @@ addCommonOptions(
     noSend: options.send === false,
     title: options.title,
     positional: url
+  });
+});
+
+addCommonOptions(
+  program
+    .command("send-file <path>")
+    .description("Upload a local PDF or EPUB file to KindleFlow")
+    .option("--title <title>", "Override the document title")
+).action(async (filePath: string, options) => {
+  await runSendFile(deps, {
+    url: options.url,
+    token: options.token,
+    positional: filePath,
+    title: options.title
   });
 });
 
