@@ -5,6 +5,7 @@ import type { KindleflowClient, SendArticleResult, RecentItem } from "../shared/
 function makeClient(overrides: Partial<KindleflowClient> = {}): KindleflowClient {
   return {
     sendArticle: vi.fn(),
+    sendFile: vi.fn(),
     sendBatch: vi.fn(),
     listRecent: vi.fn(),
     retryDelivery: vi.fn(),
@@ -25,13 +26,14 @@ const articleResult: SendArticleResult = {
 };
 
 describe("MCP tool handlers", () => {
-  it("registers exactly the four issue-spec tools", () => {
+  it("registers exactly five tools including send_file", () => {
     const tools = createTools(makeClient());
     expect(tools.map((t) => t.name).sort()).toEqual([
       "kindleflow.list_recent",
       "kindleflow.retry_delivery",
       "kindleflow.send_article",
-      "kindleflow.send_batch"
+      "kindleflow.send_batch",
+      "kindleflow.send_file"
     ]);
   });
 
@@ -43,6 +45,7 @@ describe("MCP tool handlers", () => {
     expect(summary).toEqual({
       "kindleflow.send_article": ["url", "title", "sendMode"],
       "kindleflow.send_batch": ["urls", "sendMode"],
+      "kindleflow.send_file": ["path", "title"],
       "kindleflow.list_recent": ["limit"],
       "kindleflow.retry_delivery": ["deliveryId"]
     });
@@ -109,5 +112,61 @@ describe("MCP tool handlers", () => {
     const res = await tool.handler({ deliveryId: "d1" });
     expect(retryDelivery).toHaveBeenCalledWith("d1");
     expect((res.structuredContent as { delivery: { id: string } }).delivery.id).toBe("d1");
+  });
+
+  describe("send_file", () => {
+    const fileResult: SendArticleResult = {
+      kind: "pdf",
+      libraryItemId: "li2",
+      filename: "stored-123.pdf",
+      mimeType: "application/pdf",
+      sourceUrl: "",
+      title: "My Document",
+      deduped: false,
+      delivery: { id: "d2", status: "sent" }
+    };
+
+    it("passes path and title through and returns structured result", async () => {
+      const sendFile = vi.fn().mockResolvedValue(fileResult);
+      const client = makeClient({ sendFile });
+      const tool = createTools(client).find((t) => t.name === "kindleflow.send_file")!;
+      const res = await tool.handler({ path: "/tmp/doc.pdf", title: "My Document" });
+      expect(sendFile).toHaveBeenCalledWith("/tmp/doc.pdf", { title: "My Document" });
+      expect(res.isError).toBeFalsy();
+      expect(res.structuredContent?.libraryItemId).toBe("li2");
+      expect(res.structuredContent?.title).toBe("My Document");
+      expect(res.structuredContent?.mimeType).toBe("application/pdf");
+    });
+
+    it("returns an MCP error result on client failure", async () => {
+      const sendFile = vi.fn().mockRejectedValue(Object.assign(new Error("File not found"), { code: "IMPORT" }));
+      const client = makeClient({ sendFile });
+      const tool = createTools(client).find((t) => t.name === "kindleflow.send_file")!;
+      const res = await tool.handler({ path: "/tmp/missing.pdf" });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("File not found");
+    });
+
+    it("returns error with code when available", async () => {
+      const sendFile = vi.fn().mockRejectedValue(Object.assign(new Error("Auth failed"), { code: "AUTH" }));
+      const client = makeClient({ sendFile });
+      const tool = createTools(client).find((t) => t.name === "kindleflow.send_file")!;
+      const res = await tool.handler({ path: "/tmp/doc.pdf" });
+      expect(res.isError).toBe(true);
+      const parsed = JSON.parse(res.content[0].text);
+      expect(parsed.code).toBe("AUTH");
+    });
+
+    it("includes delivery status in structured result", async () => {
+      const failedResult = { ...fileResult, delivery: { id: "d3", status: "failed" as const, error: "SMTP error" } };
+      const sendFile = vi.fn().mockResolvedValue(failedResult);
+      const client = makeClient({ sendFile });
+      const tool = createTools(client).find((t) => t.name === "kindleflow.send_file")!;
+      const res = await tool.handler({ path: "/tmp/doc.pdf" });
+      expect(res.isError).toBeFalsy();
+      const content = res.structuredContent as { delivery?: { status: string; error?: string } };
+      expect(content.delivery?.status).toBe("failed");
+      expect(content.delivery?.error).toBe("SMTP error");
+    });
   });
 });
