@@ -16,7 +16,7 @@ export interface UserProfile {
 export interface LibraryItem {
   id: string;
   userId: string;
-  type: "article" | "subscription_post";
+  type: "article" | "subscription_post" | "uploaded_file";
   subscriptionId?: string;
   title: string;
   sourceUrl?: string;
@@ -28,7 +28,7 @@ export interface LibraryItem {
 export type LibraryItemMimeType = "application/epub+zip" | "application/pdf";
 
 export interface LibraryItemInput {
-  type: "article" | "subscription_post";
+  type: "article" | "subscription_post" | "uploaded_file";
   subscriptionId?: string;
   title: string;
   sourceUrl?: string;

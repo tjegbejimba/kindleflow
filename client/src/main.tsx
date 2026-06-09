@@ -254,6 +254,8 @@ function App() {
   const [pdfAnalysis, setPdfAnalysis] = React.useState<PdfAnalysis | null>(null);
   // oxlint-disable-next-line react-doctor/rerender-state-only-in-handlers
   const [pendingExtensionImport, setPendingExtensionImport] = React.useState<ExtensionImportPayload | null>(null);
+  const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
+  const [uploadTitle, setUploadTitle] = React.useState("");
   const [status, setStatus] = React.useState("");
   const [error, setError] = React.useState("");
   const [toast, setToast] = React.useState<{ id: number; kind: "success" | "error"; message: string } | null>(null);
@@ -299,6 +301,7 @@ function App() {
     | "retryDelivery"
     | "subscribe"
     | "poll"
+    | "upload"
     | null
   >(null);
 
@@ -627,6 +630,45 @@ function App() {
     }
   }
 
+  async function uploadFile(event: React.FormEvent) {
+    event.preventDefault();
+    if (!selectedFile) return;
+
+    setBusyAction("upload");
+    setError("");
+    setStatus("Uploading file...");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      if (uploadTitle.trim()) {
+        formData.append("title", uploadTitle.trim());
+      }
+
+      const res = await fetch("/api/files/upload", {
+        method: "POST",
+        credentials: "include",
+        body: formData
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error ?? `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      setStatus(`File uploaded: ${data.title}`);
+      setSelectedFile(null);
+      setUploadTitle("");
+      await loadDeliveries();
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatus("");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function retryDelivery(deliveryId: string) {
     setBusyAction("retryDelivery");
     setError("");
@@ -768,6 +810,45 @@ function App() {
               sendButtonLabel={busyAction === "send" ? "Sending..." : "Send to Kindle"}
             />
           ) : null}
+
+          <form className="card upload-form" onSubmit={uploadFile}>
+            <h2>Upload local PDF or EPUB</h2>
+            <p className="muted">
+              Upload a single PDF or EPUB file you already have on your device. File is saved to your library and can be sent to Kindle.
+            </p>
+            {!config?.emailDeliveryEnabled ? (
+              <p className="muted warning">
+                Email delivery is not configured. Files will be saved to your library and available through OPDS, but cannot be sent to Kindle.
+                {!config?.kindleApprovedSender && " Configure SMTP settings in the server environment to enable delivery."}
+              </p>
+            ) : !user?.kindleEmail ? (
+              <p className="muted warning">
+                Set your Kindle email address below to enable delivery after upload.
+              </p>
+            ) : null}
+            <label htmlFor="upload-file">Choose file (PDF or EPUB, max 50 MB)</label>
+            <input
+              id="upload-file"
+              type="file"
+              accept=".pdf,.epub"
+              onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+            />
+            {selectedFile ? (
+              <>
+                <label htmlFor="upload-title">Title (optional)</label>
+                <input
+                  id="upload-title"
+                  type="text"
+                  placeholder={`Defaults to: ${selectedFile.name.replace(/\.[^.]+$/, "")}`}
+                  value={uploadTitle}
+                  onChange={(e) => setUploadTitle(e.target.value)}
+                />
+              </>
+            ) : null}
+            <button type="submit" disabled={isBusy || !selectedFile}>
+              {busyAction === "upload" ? "Uploading..." : "Upload file"}
+            </button>
+          </form>
 
           <section className="card">
             <h2>Kindle settings</h2>
