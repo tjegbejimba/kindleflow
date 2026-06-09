@@ -1,5 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { GeneratedFileActions } from "./GeneratedFileActions.js";
 import { visibleGeneratedFileAfterDelivery } from "./generatedFileVisibility.js";
 import "./styles.css";
 
@@ -249,6 +250,7 @@ function App() {
   const [subscriptionUrl, setSubscriptionUrl] = React.useState("");
   const [result, setResult] = React.useState<FetchResult | null>(null);
   const [generatedFile, setGeneratedFile] = React.useState<GeneratedFile | null>(null);
+  const [isGeneratedFileExpanded, setGeneratedFileExpanded] = React.useState(true);
   const [pdfAnalysis, setPdfAnalysis] = React.useState<PdfAnalysis | null>(null);
   // oxlint-disable-next-line react-doctor/rerender-state-only-in-handlers
   const [pendingExtensionImport, setPendingExtensionImport] = React.useState<ExtensionImportPayload | null>(null);
@@ -413,6 +415,7 @@ function App() {
     setError("");
     setStatus("Fetching and extracting article...");
     setGeneratedFile(null);
+    setGeneratedFileExpanded(true);
 
     try {
       const response = await apiPost<FetchResult>("/api/articles/fetch", { url });
@@ -426,6 +429,7 @@ function App() {
           sentToKindle: response.generated.sentToKindle,
           delivery: response.generated.delivery
         });
+        setGeneratedFileExpanded(true);
         await loadDeliveries();
         setStatus(deliveryStatusMessage(response.generated.delivery, "PDF imported."));
         flashDeliveryToast(response.generated.delivery, "PDF");
@@ -450,6 +454,7 @@ function App() {
     setError("");
     setStatus("Importing article from browser extension...");
     setGeneratedFile(null);
+    setGeneratedFileExpanded(true);
 
     try {
       const response = await apiPost<ArticleFetchResult>("/api/articles/import", payload);
@@ -476,7 +481,9 @@ function App() {
         ...result.article,
         sourceUrl: result.sourceUrl
       });
-      setGeneratedFile(visibleGeneratedFileAfterDelivery(response));
+      const visibleFile = visibleGeneratedFileAfterDelivery(response);
+      setGeneratedFile(visibleFile);
+      setGeneratedFileExpanded(Boolean(visibleFile));
       await loadDeliveries();
       setStatus(deliveryStatusMessage(response.delivery, "EPUB generated."));
       flashDeliveryToast(response.delivery, "EPUB");
@@ -501,9 +508,13 @@ function App() {
       await loadDeliveries();
       setStatus(deliveryStatusMessage(response.delivery, "Sent to Kindle."));
       flashDeliveryToast(response.delivery, "EPUB");
-      setGeneratedFile(
-        visibleGeneratedFileAfterDelivery({ ...generatedFile, sentToKindle: response.sent, delivery: response.delivery })
-      );
+      const visibleFile = visibleGeneratedFileAfterDelivery({
+        ...generatedFile,
+        sentToKindle: response.sent,
+        delivery: response.delivery
+      });
+      setGeneratedFile(visibleFile);
+      setGeneratedFileExpanded(Boolean(visibleFile));
     } catch (err) {
       setError(errorMessage(err));
       setStatus("");
@@ -746,22 +757,16 @@ function App() {
           ) : null}
 
           {generatedFile ? (
-            <section className="card actions">
-              <div>
-                <h2>Your {getFileTypeLabel(generatedFile.mimeType)} is ready</h2>
-                <p>{generatedFile.filename}</p>
-              </div>
-              <div className="action-buttons">
-                <a className="button" href={generatedFile.downloadUrl}>
-                  Download {getFileTypeLabel(generatedFile.mimeType)}
-                </a>
-                {config?.emailDeliveryEnabled && user.kindleEmail && !generatedFile.sentToKindle ? (
-                  <button type="button" onClick={sendToKindle} disabled={isBusy}>
-                    {busyAction === "send" ? "Sending..." : "Send to Kindle"}
-                  </button>
-                ) : null}
-              </div>
-            </section>
+            <GeneratedFileActions
+              file={generatedFile}
+              fileTypeLabel={getFileTypeLabel(generatedFile.mimeType)}
+              canSendToKindle={Boolean(config?.emailDeliveryEnabled && user.kindleEmail && !generatedFile.sentToKindle)}
+              isBusy={isBusy}
+              isExpanded={isGeneratedFileExpanded}
+              onExpandedChange={setGeneratedFileExpanded}
+              onSendToKindle={sendToKindle}
+              sendButtonLabel={busyAction === "send" ? "Sending..." : "Send to Kindle"}
+            />
           ) : null}
 
           <section className="card">

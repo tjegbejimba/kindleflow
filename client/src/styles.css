@@ -277,18 +277,51 @@ form > button {
   padding-left: 1rem;
 }
 
-.actions {
-  align-items: center;
-  justify-content: space-between;
-}
-
-.actions p {
-  color: #6f6257;
-  margin: 0.5rem 0 0;
-}
-
 .action-buttons {
   flex-wrap: wrap;
+}
+
+.generated-file-actions summary {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  list-style: none;
+}
+
+.generated-file-actions summary::-webkit-details-marker {
+  display: none;
+}
+
+.generated-file-summary-copy {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.generated-file-title {
+  color: #1d1a17;
+  font-size: clamp(1.6rem, 4vw, 2.6rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.generated-file-toggle {
+  align-items: center;
+  background: #eadccb;
+  border-radius: 999px;
+  color: #1d1a17;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-weight: 800;
+  padding: 0.35rem 0.7rem;
+}
+
+.generated-file-content {
+  border-top: 1px solid #eadccb;
+  margin-top: 1rem;
+  padding-top: 1rem;
 }
 
 .reader-actions {
@@ -470,9 +503,12 @@ form > button {
 
   .input-row,
   .preview-heading,
-  .actions,
   .account-card {
     align-items: stretch;
+    flex-direction: column;
+  }
+
+  .generated-file-actions summary {
     flex-direction: column;
   }
 
