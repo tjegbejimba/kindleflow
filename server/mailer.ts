@@ -7,8 +7,10 @@ export async function sendFileToKindle(
   config: SmtpConfig,
   dataDir: string,
   filename: string,
-  kindleEmail: string
+  kindleEmail: string,
+  displayFilename?: string
 ): Promise<{ messageId?: string; response?: string }> {
+  // Validate stored filename (for data directory lookup)
   const safeFilename = path.basename(filename);
   if (safeFilename !== filename) {
     throw new Error("Invalid generated file name.");
@@ -24,6 +26,14 @@ export async function sendFileToKindle(
     throw new Error("Generated file path escaped the data directory.");
   }
 
+  // Validate and sanitize display filename if provided
+  let attachmentFilename: string;
+  if (displayFilename !== undefined) {
+    attachmentFilename = sanitizeDisplayFilename(displayFilename, path.extname(safeFilename));
+  } else {
+    attachmentFilename = safeFilename;
+  }
+
   const transporter = createTransporter(config);
 
   const info = await transporter.sendMail({
@@ -33,7 +43,7 @@ export async function sendFileToKindle(
     text: "Attached is your KindleFlow file.",
     attachments: [
       {
-        filename: safeFilename,
+        filename: attachmentFilename,
         content: createReadStream(absolutePath),
         contentType
       }
@@ -44,6 +54,39 @@ export async function sendFileToKindle(
     messageId: typeof info.messageId === "string" ? info.messageId : undefined,
     response: typeof info.response === "string" ? info.response : undefined
   };
+}
+
+function sanitizeDisplayFilename(displayName: string, extension: string): string {
+  // Reject blank or whitespace-only
+  if (!displayName || !displayName.trim()) {
+    throw new Error("Display filename cannot be blank.");
+  }
+
+  // Reject path separators
+  if (displayName.includes("/") || displayName.includes("\\") || displayName.includes(path.sep)) {
+    throw new Error("Display filename cannot contain path separators.");
+  }
+
+  // Reject CR/LF
+  if (displayName.includes("\r") || displayName.includes("\n")) {
+    throw new Error("Display filename cannot contain CR/LF characters.");
+  }
+
+  // Sanitize unsafe characters: replace with underscore
+  // Keep alphanumeric, spaces, hyphens, underscores, dots, and basic punctuation
+  let sanitized = displayName.replace(/[<>:"|?*\x00-\x1F]/g, "_");
+
+  // Ensure it has the correct extension
+  if (!sanitized.toLowerCase().endsWith(extension.toLowerCase())) {
+    // Strip any existing extension and add the correct one
+    const lastDot = sanitized.lastIndexOf(".");
+    if (lastDot > 0) {
+      sanitized = sanitized.substring(0, lastDot);
+    }
+    sanitized = sanitized + extension;
+  }
+
+  return sanitized;
 }
 
 function mimeTypeForFilename(filename: string): string | undefined {
