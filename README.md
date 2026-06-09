@@ -100,8 +100,13 @@ environment. Example Claude Desktop entry:
 }
 ```
 
-Tools exposed: `kindleflow.send_article`, `kindleflow.send_batch`,
-`kindleflow.list_recent`, `kindleflow.retry_delivery`.
+**Tools exposed:**
+
+- `kindleflow.send_article` — Import a URL into KindleFlow, generate an EPUB, and deliver to Kindle.
+- `kindleflow.send_file` — Upload a local PDF or EPUB file from the MCP server host filesystem. **Path semantics:** The `path` argument is resolved on the machine running the MCP server (e.g., your laptop or agent host), not the user's browser or chat client. Accepts only PDF and EPUB files up to 50 MB. Returns structured content including library item ID, delivery status, and any delivery errors.
+- `kindleflow.send_batch` — Import a list of URLs in turn.
+- `kindleflow.list_recent` — List recent imported items and their latest delivery status.
+- `kindleflow.retry_delivery` — Retry a previously failed Kindle delivery by ID.
 
 ### API token scope
 

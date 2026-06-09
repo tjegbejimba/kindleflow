@@ -64,6 +64,25 @@ export function createTools(client: KindleflowClient): ToolDefinition[] {
       }
     },
     {
+      name: "kindleflow.send_file",
+      description:
+        "Upload a local PDF or EPUB file from the MCP server host filesystem to KindleFlow and deliver it to Kindle. The path is resolved on the machine running the MCP server, not the user's browser or chat client. Accepts only PDF and EPUB files up to 50 MB.",
+      inputSchema: {
+        path: z.string().describe("Absolute or relative filesystem path on the MCP server host to a PDF or EPUB file."),
+        title: z.string().optional().describe("Optional title override for the library and delivery.")
+      },
+      handler: async (input) => {
+        try {
+          const result = await client.sendFile(String(input.path), {
+            title: typeof input.title === "string" ? input.title : undefined
+          });
+          return ok(result);
+        } catch (e) {
+          return err(e instanceof Error ? e.message : String(e), (e as { code?: string }).code);
+        }
+      }
+    },
+    {
       name: "kindleflow.send_batch",
       description: "Import a list of URLs in turn. Emits structured per-item results.",
       inputSchema: {

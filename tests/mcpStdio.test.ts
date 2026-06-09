@@ -50,7 +50,8 @@ describe("MCP stdio smoke (in-memory transport)", () => {
       "kindleflow.list_recent",
       "kindleflow.retry_delivery",
       "kindleflow.send_article",
-      "kindleflow.send_batch"
+      "kindleflow.send_batch",
+      "kindleflow.send_file"
     ]);
 
     const result = await mcpClient.callTool({ name: "kindleflow.list_recent", arguments: { limit: 5 } });
