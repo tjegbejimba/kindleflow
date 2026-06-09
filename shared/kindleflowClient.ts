@@ -307,7 +307,32 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
   async function sendFile(filePath: string, opts: SendFileOptions = {}): Promise<SendArticleResult> {
     // Dynamic import for Node.js-only modules
     const { readFile, stat } = await import("node:fs/promises");
-    const { basename } = await import("node:path");
+    const { basename, extname } = await import("node:path");
+
+    // Preflight checks
+    let fileStat;
+    try {
+      fileStat = await stat(filePath);
+    } catch (err) {
+      throw new KindleflowError("IMPORT", `File does not exist: ${filePath}`);
+    }
+
+    if (fileStat.isDirectory()) {
+      throw new KindleflowError("IMPORT", `Path is a directory, not a file: ${filePath}`);
+    }
+
+    const ext = extname(filePath).toLowerCase();
+    if (ext !== ".pdf" && ext !== ".epub") {
+      throw new KindleflowError("IMPORT", "Unsupported file type. Only PDF and EPUB files are supported.");
+    }
+
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (fileStat.size > maxSize) {
+      throw new KindleflowError(
+        "IMPORT",
+        `File size (${Math.round(fileStat.size / 1024 / 1024)}MB) exceeds 50MB limit`
+      );
+    }
 
     // Read file
     const fileBuffer = await readFile(filePath);
