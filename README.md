@@ -238,7 +238,7 @@ Unknown emails are JIT-provisioned as new accounts. CLI / MCP usage continues to
 
 When routing through `pwa-auth-bridge`, Caddy must route `/__auth/*` to the bridge and only reverse-proxy authenticated app traffic to KindleFlow. KindleFlow intentionally does not serve the SPA fallback for `/__auth/*`, so bridge login/logout/switch-user endpoints are not claimed by the app if a proxy route is missing or misordered.
 
-The included Docker Compose file is wired for the legacy NAS SSO labels: it attaches the app to the external `proxy-net` network, publishes Caddy labels for `kindleflow.tjegbejimba.com`, imports the shared Tinyauth forward-auth snippet, and binds the direct host port to `127.0.0.1` only. The current NAS deployment may instead use a static Caddyfile; keep `.env`, `data/`, and `tailscale/state/` intact when syncing code.
+The included Docker Compose file is wired for the NAS SSO/Caddy setup: it attaches the app to `proxy-net` and `kindleflow-net`, publishes Caddy labels for `kindleflow.tjegbejimba.com`, imports the shared Tinyauth forward-auth snippet, and binds the direct host port to `127.0.0.1` only. The current NAS Caddy container reaches the app over `kindleflow-net`; keep `.env`, `data/`, and `tailscale/state/` intact when updating compose.
 
 For local development without a proxy, set `AUTH_DEV_BYPASS=true` and `NODE_ENV=development`. Every request will then be treated as `AUTH_DEV_EMAIL`.
 
