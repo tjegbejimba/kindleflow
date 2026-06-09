@@ -3,5 +3,7 @@ client/dist
 data
 tailscale/state
 .env
+.git
+.github
 .DS_Store
 npm-debug.log*

@@ -22,7 +22,7 @@ services:
       - sys_module
 
   kindleflow:
-    build: .
+    image: ${KINDLEFLOW_IMAGE:-ghcr.io/tjegbejimba/kindleflow:latest}
     container_name: kindleflow
     restart: unless-stopped
     ports:
@@ -54,7 +54,7 @@ services:
     networks:
       - proxy-net
     labels:
-      com.centurylinklabs.watchtower.enable: "false"
+      com.centurylinklabs.watchtower.enable: "true"
       caddy: kindleflow.tjegbejimba.com
       caddy.tls: /etc/caddy/origin.pem /etc/caddy/origin.key
       caddy.@public_assets.path: "/assets/* /logo.svg /manifest.webmanifest /sw.js"

@@ -37,26 +37,32 @@ app then treats every unauthenticated request as `AUTH_DEV_EMAIL`
 
 ## Deployment
 
-KindleFlow is **not** deployed via GHCR or Watchtower. It runs from an on-NAS
-git checkout at `/volume2/docker/projects/kindleflow/` and is built locally by
-`docker compose build` (image name `kindleflow-kindleflow`). The Synology
-NAS has no `git` binary.
+KindleFlow deploys via **GHCR + Watchtower**. Pushes to `main` publish
+`ghcr.io/tjegbejimba/kindleflow:latest`; the NAS compose file pulls that image
+and Watchtower is allowed to update the container.
+
+The NAS compose/runtime directory is still `/volume2/docker/projects/kindleflow/`
+for continuity with the existing `.env`, `data/`, and `tailscale/state/`
+locations. Treat it as a production runtime directory, not a source checkout.
 
 Standard deploy flow:
 
 1. `git push origin main` from the developer machine.
-2. Sync the working tree to the NAS (the NAS can't `git pull` itself).
-3. SSH in and run `sudo /usr/local/bin/docker compose build kindleflow &&
-   sudo /usr/local/bin/docker compose up -d kindleflow`.
-4. Verify with `curl -sSk https://kindleflow.tail217062.ts.net/api/config`.
+2. Wait for the `Release image` GitHub Actions workflow to publish the GHCR
+   image.
+3. Let Watchtower update it on the normal schedule, or SSH in for an immediate
+   deploy:
+   `cd /volume2/docker/projects/kindleflow && sudo /usr/local/bin/docker compose pull kindleflow && sudo /usr/local/bin/docker compose up -d kindleflow`.
+4. Verify with `curl -sSk https://kindleflow.tail217062.ts.net/api/config` and
+   `curl -sSkI https://kindleflow.tjegbejimba.com/`.
 
 The Tailscale sidecar (`tailscale-kindleflow`) is authenticated via persisted
 state in `tailscale/state/`; it does not need `TS_AUTHKEY` set for restarts.
 
 ## ⚠️ Do not destroy `.env` or `data/` on the NAS
 
-The NAS checkout contains **untracked-but-critical** files that are *not* in
-git:
+The NAS runtime directory contains **untracked-but-critical** files that are
+*not* in git:
 
 - `.env` — SMTP credentials, `AUTH_TRUSTED_PROXY_SECRET`, `SUBSTACK_COOKIE`,
   `APP_BASE_URL`, `PORT=3060`, etc. **There is no backup.** If this file is
@@ -67,51 +73,33 @@ git:
 - `tailscale/state/` — Tailscale node identity. Losing it forces re-auth of
   the sidecar with a fresh `TS_AUTHKEY`.
 
-### Rules for syncing code to the NAS
+### Rules for touching the NAS runtime directory
 
-1. **Never use `rsync --delete`** against
-   `/volume2/docker/projects/kindleflow/` (or any other NAS bind-mount
-   directory). It will silently remove `.env`, `data/`, `tailscale/state/`,
-   and anything else gitignored.
-2. If a clean-sync is genuinely needed, use the explicit allow-list approach
-   instead: rsync **without** `--delete`, then remove only the specific paths
-   you intend to remove.
-3. Always exclude at minimum: `node_modules`, `data`, `client/dist`, `dist`,
-   `tailscale/state`, `.env`, `.DS_Store`. Mirror the project `.gitignore`.
-4. Before any destructive sync, run with `--dry-run` first and read the
-   output. If anything outside the repo's tracked files would be touched,
-   stop.
-
-A safe sync command template:
-
-```sh
-rsync -az \
-  --exclude='.env' \
-  --exclude='node_modules' \
-  --exclude='data' \
-  --exclude='client/dist' \
-  --exclude='dist' \
-  --exclude='tailscale/state' \
-  --exclude='.DS_Store' \
-  ./ tjegbejimba@100.104.13.117:/volume2/docker/projects/kindleflow/
-```
-
-Note the absence of `--delete`. Add it only after a `--dry-run` confirms the
-deletion set is exactly what you intend.
+1. Do not sync the source tree as the normal deploy path. Code deploys by GHCR
+   image now.
+2. **Never use `rsync --delete`** against
+   `/volume2/docker/projects/kindleflow/` or any NAS bind-mount directory. It
+   can silently remove `.env`, `data/`, `tailscale/state/`, and other
+   production-only state.
+3. If you need to update compose/config on the NAS, copy only the intended file
+   and preserve `.env`, `data/`, and `tailscale/state/`.
+4. Before any destructive cleanup, run with `--dry-run` first and read the
+   output. If anything outside the intended file set would be touched, stop.
 
 ## SSH / docker on the NAS
 
 - SSH as `tjegbejimba@100.104.13.117` (key auth). `admin@` has no key access.
 - Docker requires the full path: `sudo /usr/local/bin/docker ...`.
 - Compose files live at `/volume2/docker/projects/<app>-compose/` for most
-  apps; KindleFlow is at `/volume2/docker/projects/kindleflow/` (no
-  `-compose` suffix because it is also the git checkout).
+  apps; KindleFlow remains at `/volume2/docker/projects/kindleflow/` to
+  preserve its existing production data layout.
 
 ## Local development
 
 - `npm test` — vitest suite (must stay green).
-- `npm run build` — `tsc --noEmit && vite build`. The deploy build inside
-  Docker also runs this; if it fails locally it will fail on the NAS too.
+- `npm run build` — `tsc --noEmit && vite build`. The release workflow and
+  Docker image build also run this; if it fails locally it will fail before
+  publishing the NAS image.
 - `npm run dev:server` / `npm run dev:client` for local iteration.
 
 ## CLI / MCP

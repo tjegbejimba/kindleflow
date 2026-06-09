@@ -303,17 +303,25 @@ KindleFlow records each Kindle email attempt in delivery history. A `sent` statu
 
 ## Docker Compose deployment
 
-On the NAS, place this project under your Docker projects directory:
+KindleFlow publishes a Docker image to GHCR on pushes to `main`:
+
+```text
+ghcr.io/tjegbejimba/kindleflow:latest
+```
+
+On the NAS, keep the compose/runtime directory under Docker projects:
 
 ```bash
 mkdir -p /volume2/docker/projects/kindleflow
 cd /volume2/docker/projects/kindleflow
 ```
 
-Copy the project files there, create an optional `.env`, then start it:
+Create `.env`, keep `data/` and `tailscale/state/` in this directory, then
+start it:
 
 ```bash
-docker compose up -d --build
+docker compose pull kindleflow
+docker compose up -d kindleflow
 ```
 
 Example NAS `.env` for Tailscale access on port `3060`:
@@ -411,10 +419,13 @@ KOReader on Kindle requires a jailbroken Kindle plus launcher tooling such as KU
 
 KindleFlow’s OPDS support is still useful before a Kindle jailbreak is available because it works with other OPDS readers and keeps the server-side newsletter library ready.
 
-To update after changing code:
+To update after changing code, push to `main` and wait for the `Release image`
+GitHub Actions workflow to publish a new GHCR image. Watchtower will pull it on
+its normal schedule; for an immediate manual update:
 
 ```bash
-docker compose up -d --build
+docker compose pull kindleflow
+docker compose up -d kindleflow
 ```
 
 To view logs:
