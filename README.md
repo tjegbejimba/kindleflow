@@ -132,7 +132,7 @@ Open the KindleFlow web app and sign in through your configured reverse proxy (T
 
 Below the article URL flow, you'll find the **Upload local PDF or EPUB** card. Use this to send files you already have on your device:
 
-1. Click "Choose file" or drag and drop a PDF or EPUB file onto the upload area.
+1. Click "Choose file" to select a PDF or EPUB file.
 2. Optionally override the title (defaults to the filename without extension).
 3. Click "Upload file."
 
