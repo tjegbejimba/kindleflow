@@ -2,6 +2,13 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { GeneratedFileActions } from "./GeneratedFileActions.js";
 import { visibleGeneratedFileAfterDelivery } from "./generatedFileVisibility.js";
+import { OnboardingChecklist } from "./OnboardingChecklist.js";
+import {
+  computeOnboardingState,
+  hasSuccessfulDelivery,
+  onboardingDismissedKey,
+  onboardingSenderConfirmedKey
+} from "./onboarding.js";
 import "./styles.css";
 
 interface AppConfig {
@@ -260,6 +267,8 @@ function App() {
   const [error, setError] = React.useState("");
   const [toast, setToast] = React.useState<{ id: number; kind: "success" | "error"; message: string } | null>(null);
   const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [onboardingDismissed, setOnboardingDismissed] = React.useState(false);
+  const [senderConfirmed, setSenderConfirmed] = React.useState(false);
 
   const flashToast = React.useCallback((kind: "success" | "error", message: string) => {
     if (toastTimerRef.current) {
@@ -388,10 +397,36 @@ function App() {
     setKindleEmail(nextUser?.kindleEmail ?? "");
     setAutoSendToKindle(nextUser?.autoSendToKindle ?? true);
     setSubscriptionRetentionDays(nextUser?.subscriptionRetentionDays ?? 30);
+    if (nextUser) {
+      setOnboardingDismissed(readLocalFlag(onboardingDismissedKey(nextUser.id)));
+      setSenderConfirmed(readLocalFlag(onboardingSenderConfirmedKey(nextUser.id)));
+    } else {
+      setOnboardingDismissed(false);
+      setSenderConfirmed(false);
+    }
   }
 
-  async function saveProfile(event: React.FormEvent) {
-    event.preventDefault();
+  function dismissOnboarding() {
+    setOnboardingDismissed(true);
+    if (user) {
+      writeLocalFlag(onboardingDismissedKey(user.id), true);
+    }
+  }
+
+  function changeSenderConfirmed(confirmed: boolean) {
+    setSenderConfirmed(confirmed);
+    if (user) {
+      writeLocalFlag(onboardingSenderConfirmedKey(user.id), confirmed);
+    }
+  }
+
+  function copyApprovedSender() {
+    if (config?.kindleApprovedSender) {
+      void navigator.clipboard.writeText(config.kindleApprovedSender);
+    }
+  }
+
+  async function persistProfile() {
     setBusyAction("profile");
     setError("");
     setStatus("Saving profile...");
@@ -410,6 +445,11 @@ function App() {
     } finally {
       setBusyAction(null);
     }
+  }
+
+  async function saveProfile(event: React.FormEvent) {
+    event.preventDefault();
+    await persistProfile();
   }
 
   async function fetchArticle(event: React.FormEvent) {
@@ -687,6 +727,14 @@ function App() {
     }
   }
 
+  const onboarding = computeOnboardingState({
+    emailDeliveryEnabled: Boolean(config?.emailDeliveryEnabled),
+    kindleEmailSet: Boolean(user?.kindleEmail),
+    senderConfirmed,
+    testDeliverySucceeded: hasSuccessfulDelivery(deliveries),
+    dismissed: onboardingDismissed
+  });
+
   return (
     <main className="shell">
       <section className="hero">
@@ -726,6 +774,26 @@ function App() {
               {user.displayName ? <p className="muted">{user.email}</p> : null}
             </div>
           </section>
+
+          {onboarding.visible ? (
+            <OnboardingChecklist
+              state={onboarding}
+              emailDeliveryEnabled={Boolean(config?.emailDeliveryEnabled)}
+              kindleApprovedSender={config?.kindleApprovedSender}
+              kindleSettingsUrl={config?.kindleSettingsUrl ?? ""}
+              kindleEmail={kindleEmail}
+              onKindleEmailChange={setKindleEmail}
+              onSaveKindleEmail={() => void persistProfile()}
+              savingEmail={busyAction === "profile"}
+              senderConfirmed={senderConfirmed}
+              onSenderConfirmedChange={changeSenderConfirmed}
+              onCopySender={copyApprovedSender}
+              onSendTest={sendTestToKindle}
+              sendingTest={busyAction === "testDelivery"}
+              isBusy={isBusy}
+              onDismiss={dismissOnboarding}
+            />
+          ) : null}
 
           <section className="card extension-callout">
             <div>
@@ -1112,6 +1180,22 @@ function parseExtensionImportMessage(value: unknown): ExtensionImportPayload | n
     sourceUrl: payload.sourceUrl,
     html: payload.html
   };
+}
+
+function readLocalFlag(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeLocalFlag(key: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(key, value ? "true" : "false");
+  } catch {
+    // Persisting onboarding state is best-effort; the app works without it.
+  }
 }
 
 function deliveryStatusMessage(delivery: KindleDelivery | undefined, fallback: string): string {
