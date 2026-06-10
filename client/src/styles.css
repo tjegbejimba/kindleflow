@@ -363,6 +363,88 @@ form > button {
   margin-top: 1rem;
 }
 
+.onboarding {
+  background: linear-gradient(135deg, rgba(255, 250, 243, 0.96), rgba(242, 226, 204, 0.96));
+}
+
+.onboarding-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.onboarding-header h2 {
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  letter-spacing: -0.04em;
+  line-height: 1.08;
+  margin: 0 0 0.5rem;
+}
+
+.onboarding-dismiss {
+  flex: 0 0 auto;
+}
+
+.onboarding-progress {
+  color: #5d3b17;
+  font-weight: 800;
+  margin: 0.75rem 0 0;
+}
+
+.onboarding-steps {
+  display: grid;
+  gap: 1rem;
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.onboarding-step {
+  background: #fffaf3;
+  border: 1px solid #eadccb;
+  border-radius: 1rem;
+  display: flex;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.onboarding-step.done {
+  background: #f3f7ef;
+  border-color: #cfe2c3;
+}
+
+.onboarding-step-marker {
+  align-items: center;
+  background: #eadccb;
+  border-radius: 999px;
+  color: #5d3b17;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-weight: 900;
+  height: 2rem;
+  justify-content: center;
+  width: 2rem;
+}
+
+.onboarding-step.done .onboarding-step-marker {
+  background: #6a9a4a;
+  color: #fffaf3;
+}
+
+.onboarding-step-body {
+  flex: 1 1 auto;
+}
+
+.onboarding-step-body h3 {
+  margin: 0 0 0.35rem;
+}
+
+.onboarding-next {
+  border-top: 1px solid #eadccb;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+}
+
 .delivery-list {
   display: grid;
   gap: 0.75rem;
