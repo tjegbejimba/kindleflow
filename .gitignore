@@ -6,3 +6,6 @@ data/
 tailscale/state/
 .DS_Store
 npm-debug.log*
+
+# Ralph Loop per-repo runtime (local-only by design; mirrors upstream ralph-loop-dashboard)
+.ralph/
