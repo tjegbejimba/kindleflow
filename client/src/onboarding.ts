@@ -10,7 +10,6 @@ export interface OnboardingInput {
   kindleEmailSet: boolean;
   senderConfirmed: boolean;
   testDeliverySucceeded: boolean;
-  dismissed: boolean;
 }
 
 export interface OnboardingState {
@@ -26,10 +25,10 @@ export interface OnboardingState {
  *
  * The three setup steps a new user must complete are: set a Kindle email,
  * approve the SMTP sender in Amazon, and confirm delivery works via a test
- * EPUB. Setup is "complete" once all three are done. The panel stays visible
- * until setup is complete or the user dismisses it. When delivery is not
- * configured server-side, the panel still renders (so the user understands
- * why) but setup can never complete on its own.
+ * EPUB. Setup is "complete" once all three are done. Onboarding stays visible
+ * until setup is complete. When delivery is not configured server-side, the
+ * panel still renders (so the user understands why) but setup can never
+ * complete on its own.
  */
 export function computeOnboardingState(input: OnboardingInput): OnboardingState {
   const steps: OnboardingStepState[] = [
@@ -41,7 +40,7 @@ export function computeOnboardingState(input: OnboardingInput): OnboardingState 
   const completedCount = steps.filter((step) => step.complete).length;
   const totalCount = steps.length;
   const setupComplete = completedCount === totalCount;
-  const visible = !input.dismissed && !setupComplete;
+  const visible = !setupComplete;
 
   return { steps, completedCount, totalCount, setupComplete, visible };
 }
@@ -57,11 +56,6 @@ interface DeliveryLike {
  */
 export function hasSuccessfulDelivery(deliveries: readonly DeliveryLike[]): boolean {
   return deliveries.some((delivery) => delivery.status === "sent");
-}
-
-/** localStorage key for the per-user onboarding dismissal flag. */
-export function onboardingDismissedKey(userId: string): string {
-  return `kindleflow:onboarding-dismissed:${userId}`;
 }
 
 /** localStorage key for the per-user "I approved the sender" confirmation. */
