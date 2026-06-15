@@ -2,11 +2,10 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { GeneratedFileActions } from "./GeneratedFileActions.js";
 import { visibleGeneratedFileAfterDelivery } from "./generatedFileVisibility.js";
-import { OnboardingChecklist } from "./OnboardingChecklist.js";
+import { OnboardingGate } from "./OnboardingGate.js";
 import {
   computeOnboardingState,
   hasSuccessfulDelivery,
-  onboardingDismissedKey,
   onboardingSenderConfirmedKey
 } from "./onboarding.js";
 import "./styles.css";
@@ -267,7 +266,6 @@ function App() {
   const [error, setError] = React.useState("");
   const [toast, setToast] = React.useState<{ id: number; kind: "success" | "error"; message: string } | null>(null);
   const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [onboardingDismissed, setOnboardingDismissed] = React.useState(false);
   const [senderConfirmed, setSenderConfirmed] = React.useState(false);
 
   const flashToast = React.useCallback((kind: "success" | "error", message: string) => {
@@ -398,18 +396,9 @@ function App() {
     setAutoSendToKindle(nextUser?.autoSendToKindle ?? true);
     setSubscriptionRetentionDays(nextUser?.subscriptionRetentionDays ?? 30);
     if (nextUser) {
-      setOnboardingDismissed(readLocalFlag(onboardingDismissedKey(nextUser.id)));
       setSenderConfirmed(readLocalFlag(onboardingSenderConfirmedKey(nextUser.id)));
     } else {
-      setOnboardingDismissed(false);
       setSenderConfirmed(false);
-    }
-  }
-
-  function dismissOnboarding() {
-    setOnboardingDismissed(true);
-    if (user) {
-      writeLocalFlag(onboardingDismissedKey(user.id), true);
     }
   }
 
@@ -731,9 +720,33 @@ function App() {
     emailDeliveryEnabled: Boolean(config?.emailDeliveryEnabled),
     kindleEmailSet: Boolean(user?.kindleEmail),
     senderConfirmed,
-    testDeliverySucceeded: hasSuccessfulDelivery(deliveries),
-    dismissed: onboardingDismissed
+    testDeliverySucceeded: hasSuccessfulDelivery(deliveries)
   });
+
+  if (user && onboarding.visible) {
+    return (
+      <main>
+        <OnboardingGate
+          state={onboarding}
+          emailDeliveryEnabled={Boolean(config?.emailDeliveryEnabled)}
+          kindleApprovedSender={config?.kindleApprovedSender}
+          kindleSettingsUrl={config?.kindleSettingsUrl ?? "https://www.amazon.com/hz/mycd/myx#/home/settings/payment"}
+          kindleEmail={kindleEmail}
+          onKindleEmailChange={setKindleEmail}
+          onSaveKindleEmail={() => void persistProfile()}
+          savingEmail={busyAction === "profile"}
+          senderConfirmed={senderConfirmed}
+          onSenderConfirmedChange={changeSenderConfirmed}
+          onCopySender={copyApprovedSender}
+          onSendTest={sendTestToKindle}
+          sendingTest={busyAction === "testDelivery"}
+          isBusy={isBusy}
+          status={status}
+          error={error}
+        />
+      </main>
+    );
+  }
 
   return (
     <main className="shell">
@@ -774,26 +787,6 @@ function App() {
               {user.displayName ? <p className="muted">{user.email}</p> : null}
             </div>
           </section>
-
-          {onboarding.visible ? (
-            <OnboardingChecklist
-              state={onboarding}
-              emailDeliveryEnabled={Boolean(config?.emailDeliveryEnabled)}
-              kindleApprovedSender={config?.kindleApprovedSender}
-              kindleSettingsUrl={config?.kindleSettingsUrl ?? ""}
-              kindleEmail={kindleEmail}
-              onKindleEmailChange={setKindleEmail}
-              onSaveKindleEmail={() => void persistProfile()}
-              savingEmail={busyAction === "profile"}
-              senderConfirmed={senderConfirmed}
-              onSenderConfirmedChange={changeSenderConfirmed}
-              onCopySender={copyApprovedSender}
-              onSendTest={sendTestToKindle}
-              sendingTest={busyAction === "testDelivery"}
-              isBusy={isBusy}
-              onDismiss={dismissOnboarding}
-            />
-          ) : null}
 
           <section className="card extension-callout">
             <div>

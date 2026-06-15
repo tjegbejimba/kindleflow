@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   computeOnboardingState,
   hasSuccessfulDelivery,
-  onboardingDismissedKey,
   onboardingSenderConfirmedKey,
   type OnboardingInput
 } from "../client/src/onboarding.js";
@@ -11,8 +10,7 @@ const baseInput: OnboardingInput = {
   emailDeliveryEnabled: true,
   kindleEmailSet: false,
   senderConfirmed: false,
-  testDeliverySucceeded: false,
-  dismissed: false
+  testDeliverySucceeded: false
 };
 
 describe("computeOnboardingState", () => {
@@ -39,12 +37,6 @@ describe("computeOnboardingState", () => {
       testDeliverySucceeded: true
     });
     expect(state.setupComplete).toBe(true);
-    expect(state.visible).toBe(false);
-  });
-
-  it("hides the panel when the user dismisses it even if setup is incomplete", () => {
-    const state = computeOnboardingState({ ...baseInput, dismissed: true });
-    expect(state.setupComplete).toBe(false);
     expect(state.visible).toBe(false);
   });
 
@@ -75,9 +67,8 @@ describe("hasSuccessfulDelivery", () => {
 });
 
 describe("storage keys", () => {
-  it("namespaces the dismissal and sender-confirmation flags per user", () => {
-    expect(onboardingDismissedKey("user-1")).toBe("kindleflow:onboarding-dismissed:user-1");
+  it("namespaces the sender-confirmation flag per user", () => {
     expect(onboardingSenderConfirmedKey("user-1")).toBe("kindleflow:onboarding-sender-confirmed:user-1");
-    expect(onboardingDismissedKey("user-1")).not.toBe(onboardingDismissedKey("user-2"));
+    expect(onboardingSenderConfirmedKey("user-1")).not.toBe(onboardingSenderConfirmedKey("user-2"));
   });
 });
