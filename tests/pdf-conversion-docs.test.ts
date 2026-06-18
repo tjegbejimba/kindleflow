@@ -88,5 +88,14 @@ describe("PDF Conversion Documentation", () => {
       const content = readFileSync(docPath, "utf-8");
       expect(content).toMatch(/pdfBuffer|title|sourceUrl|dataDir/);
     });
+
+    it("should document the correct GeneratedKindleFile return fields", () => {
+      const docPath = join(projectRoot, "docs", "architecture", "pdf-converter.md");
+      const content = readFileSync(docPath, "utf-8");
+      // Verify documented return type matches actual interface
+      expect(content).toMatch(/\bid\b.*filename.*absolutePath.*mimeType/s);
+      // Should not include incorrect fields
+      expect(content).not.toMatch(/filePath.*sizeBytes/);
+    });
   });
 });

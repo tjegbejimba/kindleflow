@@ -29,9 +29,10 @@ The function returns a `GeneratedKindleFile` from the existing EPUB generation p
 
 ```typescript
 interface GeneratedKindleFile {
-  filePath: string;           // Absolute path to generated EPUB
-  mimeType: "application/epub+zip";
-  sizeBytes: number;
+  id: string;                           // Unique identifier for the generated file
+  filename: string;                     // Base filename (e.g., "article-title.epub")
+  absolutePath: string;                 // Full filesystem path to generated EPUB
+  mimeType: "application/epub+zip";     // MIME type of generated file
 }
 ```
 
@@ -134,7 +135,7 @@ import { convertPdfToEpub } from "./pdfConverterCalibre.js";
 Any alternative converter implementation must:
 
 1. **Accept** `ConvertPdfToEpubOptions` with `pdfBuffer`, `title`, `sourceUrl?`, `dataDir`
-2. **Return** a `Promise<GeneratedKindleFile>` with `filePath`, `mimeType`, `sizeBytes`
+2. **Return** a `Promise<GeneratedKindleFile>` with `id`, `filename`, `absolutePath`, `mimeType`
 3. **Throw** an error if conversion fails (e.g., `throw new Error("Conversion failed")`)
 4. **Include a provenance note** explaining the EPUB was converted from PDF
 5. **Use `generateKindleFile()`** or ensure output matches KindleFlow EPUB conventions (cover page, metadata)
