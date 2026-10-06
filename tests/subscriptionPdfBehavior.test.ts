@@ -260,4 +260,30 @@ describe("Subscription PDF behavior under the conversion model", () => {
     expect(convertPdfToEpubMock).not.toHaveBeenCalled();
     expect(harness.store.listTemporaryFiles(harness.userId)).toEqual([]);
   });
+
+  it("sends each new post to every send-by-default Kindle and tolerates partial failure", async () => {
+    harness = await setupHarness();
+    harness.store.addKindleDevice(harness.userId, { name: "Scribe", email: "scribe@kindle.example.com" });
+    harness.store.addKindleDevice(harness.userId, {
+      name: "Spare",
+      email: "spare@kindle.example.com",
+      sendByDefault: false
+    });
+    sendFileToKindleMock.mockImplementationOnce(async () => {
+      throw new Error("SMTP hiccup");
+    });
+    vi.stubGlobal("fetch", makeFetchStub(await buildLandscapePdf()));
+
+    const { pollSubscriptions } = await import("../server/subscriptionPoller.js");
+    const result = await pollSubscriptions(harness.store, harness.config, harness.logger);
+
+    expect(result).toEqual({ checked: 1, delivered: 1 });
+    expect(sendFileToKindleMock.mock.calls.map((call) => call[3])).toEqual([
+      "reader@kindle.example.com",
+      "scribe@kindle.example.com"
+    ]);
+    const deliveries = harness.store.listKindleDeliveries(harness.userId);
+    expect(deliveries.map((delivery) => delivery.status).sort()).toEqual(["failed", "sent"]);
+    expect(new Set(deliveries.map((delivery) => delivery.batchId)).size).toBe(1);
+  });
 });

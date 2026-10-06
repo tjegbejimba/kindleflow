@@ -4,6 +4,8 @@ import type { AuthHelpers } from "./auth.js";
 import type { AuthStore } from "./authStore.js";
 import type { SmtpConfig } from "./config.js";
 import { sendUploadedFile } from "./fileUpload.js";
+import { parseKindleSelectors } from "./kindleDelivery.js";
+import type { KindleDelivery } from "./authStore.js";
 
 export async function registerFileUploadRoute(
   app: FastifyInstance,
@@ -33,6 +35,12 @@ export async function registerFileUploadRoute(
       const fileBuffer = await data.toBuffer();
       const titleField = data.fields.title as { value: string } | undefined;
       const title = titleField && typeof titleField.value === "string" ? titleField.value : undefined;
+      // Multipart fields are only visible here if they precede the file part.
+      const kindlesField = data.fields.kindles as { value: unknown } | { value: unknown }[] | undefined;
+      const kindleSelectors = parseKindleSelectors(
+        Array.isArray(kindlesField) ? kindlesField.map((field) => field.value) : kindlesField?.value
+      );
+      const kindleEmails = smtp ? store.resolveKindleTargets(user.id, kindleSelectors).map((device) => device.email) : [];
 
       const result = await sendUploadedFile(
         {
@@ -41,7 +49,7 @@ export async function registerFileUploadRoute(
           originalFilename: data.filename,
           title
         },
-        { dataDir, store, smtp, kindleEmail: user.kindleEmail }
+        { dataDir, store, smtp, kindleEmails }
       );
 
       return reply.send({
@@ -49,12 +57,8 @@ export async function registerFileUploadRoute(
         storedFilename: result.storedFilename,
         title: result.title,
         mimeType: result.mimeType,
-        delivery: result.delivery ? {
-          id: result.delivery.id,
-          status: result.delivery.status,
-          trigger: result.delivery.trigger,
-          error: result.delivery.error
-        } : null
+        delivery: result.delivery ? toUploadDelivery(result.delivery) : null,
+        deliveries: result.deliveries.map(toUploadDelivery)
       });
     } catch (error) {
       if (error instanceof Error) {
@@ -63,4 +67,14 @@ export async function registerFileUploadRoute(
       throw error;
     }
   });
+}
+
+function toUploadDelivery(delivery: KindleDelivery) {
+  return {
+    id: delivery.id,
+    status: delivery.status,
+    trigger: delivery.trigger,
+    kindleEmail: delivery.kindleEmail,
+    error: delivery.error
+  };
 }

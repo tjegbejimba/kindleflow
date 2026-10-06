@@ -24,6 +24,18 @@ const deps: CliDeps = {
 const program = new Command();
 program.name("kindleflow").description("KindleFlow CLI").version("0.1.0");
 
+function collectKindle(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
+function addKindleOption(cmd: Command): Command {
+  return cmd.option(
+    "--kindle <name-or-email>",
+    "Send to this Kindle (repeatable). Defaults to your send-by-default Kindles.",
+    collectKindle
+  );
+}
+
 function addCommonOptions(cmd: Command): Command {
   return cmd
     .option("--url <url>", "KindleFlow server URL (overrides env KINDLEFLOW_URL)")
@@ -31,8 +43,7 @@ function addCommonOptions(cmd: Command): Command {
 }
 
 addCommonOptions(
-  program
-    .command("send <url>")
+  addKindleOption(program.command("send <url>"))
     .description("Import a URL, generate an EPUB, and (optionally) auto-send to Kindle")
     .option("--no-send", "Generate but do not send to Kindle")
     .option("--title <title>", "Override the article title")
@@ -42,13 +53,13 @@ addCommonOptions(
     token: options.token,
     noSend: options.send === false,
     title: options.title,
+    kindles: options.kindle,
     positional: url
   });
 });
 
 addCommonOptions(
-  program
-    .command("send-file <path>")
+  addKindleOption(program.command("send-file <path>"))
     .description("Upload a local PDF or EPUB file to KindleFlow")
     .option("--title <title>", "Override the document title")
 ).action(async (filePath: string, options) => {
@@ -56,13 +67,13 @@ addCommonOptions(
     url: options.url,
     token: options.token,
     positional: filePath,
-    title: options.title
+    title: options.title,
+    kindles: options.kindle
   });
 });
 
 addCommonOptions(
-  program
-    .command("send-batch <file>")
+  addKindleOption(program.command("send-batch <file>"))
     .description("Read newline-delimited URLs from <file> and import each in turn")
     .option("--no-send", "Generate but do not send to Kindle")
 ).action(async (file: string, options) => {
@@ -85,6 +96,7 @@ addCommonOptions(
     url: options.url,
     token: options.token,
     noSend: options.send === false,
+    kindles: options.kindle,
     urls
   });
 });

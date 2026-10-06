@@ -3,6 +3,7 @@ import {
   createClient,
   EXIT_CODES,
   KindleflowError,
+  deliveriesOf,
   type BatchEvent,
   type SendArticleResult
 } from "../shared/kindleflowClient.js";
@@ -183,5 +184,68 @@ describe("kindleflowClient", () => {
     const row = await client.retryDelivery("d1");
     expect(row.id).toBe("d1");
     expect(fetchImpl.mock.calls[0][0]).toBe("http://test/api/deliveries/d1/retry");
+  });
+
+  it("passes selected Kindles to send-url and exposes every delivery", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      makeResponse(200, {
+        ...articleResult,
+        deliveries: [
+          { id: "d1", status: "sent", kindleEmail: "a@kindle.com" },
+          { id: "d2", status: "failed", kindleEmail: "b@kindle.com", error: "boom" }
+        ]
+      })
+    );
+    const client = createClient({ baseUrl: "http://test", token: "kf_pat_x", fetchImpl: fetchImpl as any });
+    const result = await client.sendArticle("https://ex/a", { kindles: ["Paperwhite", "Scribe"] });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).kindles).toEqual(["Paperwhite", "Scribe"]);
+    expect(deliveriesOf(result).map((d) => d.status)).toEqual(["sent", "failed"]);
+  });
+
+  it("deliveriesOf falls back to the single delivery from older servers", () => {
+    expect(deliveriesOf(articleResult)).toEqual([articleResult.delivery]);
+    expect(deliveriesOf({ ...articleResult, delivery: null })).toEqual([]);
+  });
+
+  it("sendBatch only counts an item as sent when every Kindle received it", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        makeResponse(200, {
+          ...articleResult,
+          deliveries: [
+            { id: "d1", status: "sent" },
+            { id: "d2", status: "failed" }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(makeResponse(200, articleResult));
+    const client = createClient({ baseUrl: "http://test", token: "kf_pat_x", fetchImpl: fetchImpl as any });
+    const events: BatchEvent[] = [];
+    for await (const ev of client.sendBatch(["https://ex/a", "https://ex/b"], { kindles: ["scribe"] })) {
+      events.push(ev);
+    }
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).kindles).toEqual(["scribe"]);
+    expect(events.at(-1)).toMatchObject({ type: "done", sent: 1 });
+  });
+
+  it("listKindles and status() report configured Kindles", async () => {
+    const devices = [{ id: "k1", name: "Paperwhite", email: "pw@kindle.com", sendByDefault: true, isPrimary: true }];
+    const fetchImpl = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/api/me")) return Promise.resolve(makeResponse(200, { user: { email: "tj@example.com" } }));
+      if (url.endsWith("/api/config")) return Promise.resolve(makeResponse(200, { emailDeliveryEnabled: true }));
+      if (url.endsWith("/api/kindles")) return Promise.resolve(makeResponse(200, { devices }));
+      if (url.includes("/api/library/recent")) return Promise.resolve(makeResponse(200, { items: [] }));
+      return Promise.resolve(makeResponse(404, "nope"));
+    });
+    const client = createClient({ baseUrl: "http://test", token: "kf_pat_x", fetchImpl: fetchImpl as any });
+    expect(await client.listKindles()).toEqual(devices);
+    expect((await client.status()).kindles).toEqual(devices);
+  });
+
+  it("maps unknown Kindle selections to DELIVERY", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(makeResponse(400, { message: 'Unknown Kindle "Nope".' }));
+    const client = createClient({ baseUrl: "http://test", token: "kf_pat_x", fetchImpl: fetchImpl as any });
+    await expect(client.sendArticle("https://ex/a", { kindles: ["Nope"] })).rejects.toMatchObject({ code: "DELIVERY" });
   });
 });

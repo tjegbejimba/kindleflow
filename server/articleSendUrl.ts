@@ -10,6 +10,7 @@ import {
   type UserProfile
 } from "./authStore.js";
 import { type AppConfig, type SmtpConfig } from "./config.js";
+import { deliverToKindles, parseKindleSelectors, requireKindleTargets } from "./kindleDelivery.js";
 import { generateKindleFile, saveKindlePdf } from "./kindleFile.js";
 import { sendFileToKindle } from "./mailer.js";
 import { type PdfAnalysisVerdict, shouldAutoSendPdf } from "./pdfAnalyzer.js";
@@ -21,6 +22,8 @@ export interface SendArticleByUrlInput {
   url: string;
   title?: string;
   sendMode: SendMode;
+  /** Kindle ids, emails, or names. Non-empty selects those Kindles and forces a send (unless sendMode is "none"). */
+  kindles?: string[];
 }
 
 export interface SendArticleByUrlResult {
@@ -31,7 +34,9 @@ export interface SendArticleByUrlResult {
   sourceUrl: string;
   title: string;
   deduped: boolean;
+  /** First delivery of the batch, kept for older clients. */
   delivery: KindleDelivery | null;
+  deliveries: KindleDelivery[];
   pdfVerdict?: PdfAnalysisVerdict;
 }
 
@@ -54,7 +59,9 @@ export async function sendArticleByUrl(
   input: SendArticleByUrlInput
 ): Promise<SendArticleByUrlResult> {
   const { store, config, log } = deps;
-  const { user, url, title: titleOverride, sendMode } = input;
+  const { user, url, title: titleOverride } = input;
+  const selectors = (input.kindles ?? []).map((kindle) => kindle.trim()).filter(Boolean);
+  const sendMode: SendMode = selectors.length > 0 && input.sendMode !== "none" ? "force" : input.sendMode;
 
   if (typeof url !== "string" || !url.trim()) {
     const error = new Error("URL is required.");
@@ -62,16 +69,8 @@ export async function sendArticleByUrl(
     throw error;
   }
 
-  if (sendMode === "force" && !config.smtp) {
-    const error = new Error("Kindle email delivery is not configured.");
-    Object.assign(error, { statusCode: 400 });
-    throw error;
-  }
-  if (sendMode === "force" && !user.kindleEmail) {
-    const error = new Error("Add your Kindle email address before sending files.");
-    Object.assign(error, { statusCode: 400 });
-    throw error;
-  }
+  const forcedTargets =
+    sendMode === "force" ? requireKindleTargets({ store, smtp: config.smtp, userId: user.id, selectors }) : undefined;
 
   // Pre-fetch dedupe: cheap exact-match against the raw URL.
   const existingByRaw = store.getLibraryItemForUserBySourceUrl(user.id, url);
@@ -111,9 +110,9 @@ export async function sendArticleByUrl(
       autoSendCandidate: shouldAutoSendPdf(fetched.analysis.verdict)
     });
 
-    const delivery = shouldDeliver
-      ? await runDelivery(deps, user, libraryItem, sendMode === "force" ? "manual" : "auto", log)
-      : null;
+    const deliveries = shouldDeliver
+      ? await runDelivery(deps, user, libraryItem, sendMode === "force" ? "manual" : "auto", log, forcedTargets)
+      : [];
 
     return {
       kind: "pdf",
@@ -123,7 +122,8 @@ export async function sendArticleByUrl(
       sourceUrl: fetched.sourceUrl,
       title: libraryItem.title,
       deduped: false,
-      delivery,
+      delivery: deliveries[0] ?? null,
+      deliveries,
       pdfVerdict: fetched.analysis.verdict
     };
   }
@@ -149,9 +149,9 @@ export async function sendArticleByUrl(
   });
 
   const shouldDeliver = decideDelivery({ sendMode, user, config, autoSendCandidate: true });
-  const delivery = shouldDeliver
-    ? await runDelivery(deps, user, libraryItem, sendMode === "force" ? "manual" : "auto", log)
-    : null;
+  const deliveries = shouldDeliver
+    ? await runDelivery(deps, user, libraryItem, sendMode === "force" ? "manual" : "auto", log, forcedTargets)
+    : [];
 
   return {
     kind: "article",
@@ -161,7 +161,8 @@ export async function sendArticleByUrl(
     sourceUrl: fetched.sourceUrl,
     title: articleTitle,
     deduped: false,
-    delivery
+    delivery: deliveries[0] ?? null,
+    deliveries
   };
 }
 
@@ -174,7 +175,8 @@ function toDedupedResult(item: LibraryItem): SendArticleByUrlResult {
     sourceUrl: item.sourceUrl ?? "",
     title: item.title,
     deduped: true,
-    delivery: null
+    delivery: null,
+    deliveries: []
   };
 }
 
@@ -196,32 +198,20 @@ async function runDelivery(
   user: UserProfile,
   libraryItem: LibraryItem,
   trigger: KindleDelivery["trigger"],
-  log: FastifyBaseLogger
-): Promise<KindleDelivery> {
-  const smtp = deps.config.smtp as SmtpConfig;
-  const kindleEmail = user.kindleEmail as string;
-  const delivery = deps.store.createKindleDelivery(user.id, {
-    libraryItemId: libraryItem.id,
-    title: libraryItem.title,
-    filename: libraryItem.filename,
-    kindleEmail,
+  log: FastifyBaseLogger,
+  targets = deps.store.resolveKindleTargets(user.id)
+): Promise<KindleDelivery[]> {
+  return deliverToKindles({
+    store: deps.store,
+    smtp: deps.config.smtp as SmtpConfig,
+    dataDir: deps.config.dataDir,
+    log,
+    send: deps.sendFileToKindle,
+    userId: user.id,
+    targets: targets.map((device) => device.email),
+    file: { libraryItemId: libraryItem.id, title: libraryItem.title, filename: libraryItem.filename },
     trigger
   });
-  try {
-    const result = await deps.sendFileToKindle(smtp, deps.config.dataDir, delivery.filename, kindleEmail);
-    return deps.store.recordKindleDeliveryResult(delivery.id, {
-      status: "sent",
-      messageId: result.messageId,
-      response: result.response
-    });
-  } catch (error) {
-    const failed = deps.store.recordKindleDeliveryResult(delivery.id, {
-      status: "failed",
-      error: error instanceof Error ? error.message : "Kindle delivery failed."
-    });
-    log.warn({ err: error, deliveryId: delivery.id }, "kindle delivery failed");
-    return failed;
-  }
 }
 
 export function registerSendUrlRoute(
@@ -231,7 +221,7 @@ export function registerSendUrlRoute(
 ): void {
   app.post("/api/articles/send-url", async (request) => {
     const user = auth.requireUser(request);
-    const body = (request.body ?? {}) as { url?: unknown; title?: unknown; sendMode?: unknown };
+    const body = (request.body ?? {}) as { url?: unknown; title?: unknown; sendMode?: unknown; kindles?: unknown };
     if (typeof body.url !== "string") {
       const error = new Error("URL is required.");
       Object.assign(error, { statusCode: 400 });
@@ -241,7 +231,13 @@ export function registerSendUrlRoute(
     const title = typeof body.title === "string" && body.title.trim() ? body.title : undefined;
 
     try {
-      const result = await sendArticleByUrl(deps, { user, url: body.url, title, sendMode });
+      const result = await sendArticleByUrl(deps, {
+        user,
+        url: body.url,
+        title,
+        sendMode,
+        kindles: parseKindleSelectors(body.kindles)
+      });
       return result;
     } catch (err) {
       if (err instanceof Error && (err as { statusCode?: number }).statusCode) {

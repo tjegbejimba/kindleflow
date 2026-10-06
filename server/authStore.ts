@@ -57,6 +57,7 @@ export interface TemporaryFileInput {
 export interface KindleDelivery {
   id: string;
   userId: string;
+  batchId?: string;
   libraryItemId?: string;
   title: string;
   filename: string;
@@ -72,6 +73,7 @@ export interface KindleDelivery {
 }
 
 export interface KindleDeliveryInput {
+  batchId?: string;
   libraryItemId?: string;
   title: string;
   filename: string;
@@ -123,10 +125,33 @@ export interface CreatedApiToken extends ApiTokenRecord {
 export interface RecentLibraryItem extends LibraryItem {
   latestDelivery: {
     id: string;
+    /** Aggregate over every Kindle in the latest send: failed if any failed, pending if any pending. */
     status: KindleDelivery["status"];
     updatedAt: string;
+    sentCount: number;
+    totalCount: number;
   } | null;
 }
+
+export interface KindleDevice {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  sendByDefault: boolean;
+  isPrimary: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KindleDeviceInput {
+  name: string;
+  email: string;
+  sendByDefault?: boolean;
+}
+
+export const MAX_KINDLE_DEVICES = 10;
+export const MAX_KINDLE_DEVICE_NAME_LENGTH = 60;
 
 export const API_TOKEN_PREFIX = "kf_pat_";
 
@@ -220,9 +245,15 @@ export class AuthStore {
     profile: { kindleEmail?: string | null; autoSendToKindle?: boolean; subscriptionRetentionDays?: number }
   ): UserProfile {
     if (profile.kindleEmail !== undefined) {
-      this.db
-        .prepare("UPDATE users SET kindle_email = ?, updated_at = datetime('now') WHERE id = ?")
-        .run(normalizeOptionalEmail(profile.kindleEmail), userId);
+      const kindleEmail = normalizeOptionalEmail(profile.kindleEmail);
+      this.transaction(() => {
+        if (kindleEmail) {
+          this.applyLegacyKindleEmail(userId, kindleEmail);
+        } else {
+          this.db.prepare("DELETE FROM kindle_devices WHERE user_id = ?").run(userId);
+          this.syncKindleDevices(userId);
+        }
+      });
     }
 
     if (profile.autoSendToKindle !== undefined) {
@@ -435,6 +466,111 @@ export class AuthStore {
     return row ?? null;
   }
 
+  listKindleDevices(userId: string): KindleDevice[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM kindle_devices WHERE user_id = ? ORDER BY created_at ASC, rowid ASC")
+        .all(userId) as unknown as DbKindleDevice[]
+    ).map(toKindleDevice);
+  }
+
+  getKindleDevice(userId: string, deviceId: string): KindleDevice | null {
+    const row = this.db
+      .prepare("SELECT * FROM kindle_devices WHERE user_id = ? AND id = ?")
+      .get(userId, deviceId) as DbKindleDevice | undefined;
+    return row ? toKindleDevice(row) : null;
+  }
+
+  addKindleDevice(userId: string, input: KindleDeviceInput): KindleDevice {
+    const name = normalizeDeviceName(input.name);
+    const email = normalizeDeviceEmail(input.email);
+    const id = randomUUID();
+    this.transaction(() => {
+      const devices = this.listKindleDevices(userId);
+      if (devices.length >= MAX_KINDLE_DEVICES) {
+        throw badRequest(`You can add up to ${MAX_KINDLE_DEVICES} Kindles.`);
+      }
+      this.assertDeviceUnique(devices, { name, email });
+      const sendByDefault = devices.length === 0 ? true : input.sendByDefault ?? true;
+      this.db
+        .prepare(
+          `INSERT INTO kindle_devices (id, user_id, name, email, send_by_default, is_primary, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+        )
+        .run(id, userId, name, email, sendByDefault ? 1 : 0, devices.length === 0 ? 1 : 0);
+      this.syncKindleDevices(userId);
+    });
+    return this.getKindleDevice(userId, id)!;
+  }
+
+  updateKindleDevice(
+    userId: string,
+    deviceId: string,
+    patch: { name?: string; email?: string; sendByDefault?: boolean }
+  ): KindleDevice {
+    this.transaction(() => {
+      const devices = this.listKindleDevices(userId);
+      const device = devices.find((candidate) => candidate.id === deviceId);
+      if (!device) {
+        throw Object.assign(new Error("Kindle not found."), { statusCode: 404 });
+      }
+      const others = devices.filter((candidate) => candidate.id !== deviceId);
+      const name = patch.name === undefined ? device.name : normalizeDeviceName(patch.name);
+      const email = patch.email === undefined ? device.email : normalizeDeviceEmail(patch.email);
+      this.assertDeviceUnique(others, { name, email });
+      const sendByDefault = patch.sendByDefault ?? device.sendByDefault;
+      if (!sendByDefault && !others.some((candidate) => candidate.sendByDefault)) {
+        throw badRequest("At least one Kindle must stay selected for automatic sends.");
+      }
+      this.db
+        .prepare(
+          `UPDATE kindle_devices SET name = ?, email = ?, send_by_default = ?, updated_at = datetime('now')
+           WHERE id = ? AND user_id = ?`
+        )
+        .run(name, email, sendByDefault ? 1 : 0, deviceId, userId);
+      this.syncKindleDevices(userId);
+    });
+    return this.getKindleDevice(userId, deviceId)!;
+  }
+
+  deleteKindleDevice(userId: string, deviceId: string): boolean {
+    let deleted = false;
+    this.transaction(() => {
+      const result = this.db.prepare("DELETE FROM kindle_devices WHERE id = ? AND user_id = ?").run(deviceId, userId);
+      deleted = result.changes > 0;
+      if (deleted) {
+        this.syncKindleDevices(userId);
+      }
+    });
+    return deleted;
+  }
+
+  /**
+   * Resolves the Kindles a send should go to. With no selectors, returns the
+   * send-by-default devices. Selectors match device id, then email, then name
+   * (case-insensitive).
+   */
+  resolveKindleTargets(userId: string, selectors?: readonly string[]): KindleDevice[] {
+    const devices = this.listKindleDevices(userId);
+    const cleaned = (selectors ?? []).map((selector) => selector.trim()).filter(Boolean);
+    if (cleaned.length === 0) {
+      return devices.filter((device) => device.sendByDefault);
+    }
+    const selected = new Set<string>();
+    for (const selector of cleaned) {
+      const lowered = selector.toLowerCase();
+      const match =
+        devices.find((device) => device.id === selector) ??
+        devices.find((device) => device.email === lowered) ??
+        devices.find((device) => device.name.toLowerCase() === lowered);
+      if (!match) {
+        throw badRequest(`Unknown Kindle "${selector}".`);
+      }
+      selected.add(match.id);
+    }
+    return devices.filter((device) => selected.has(device.id));
+  }
+
   getLibraryItemForUserBySourceUrl(userId: string, sourceUrl: string): LibraryItem | null {
     const row = this.db
       .prepare(
@@ -450,7 +586,8 @@ export class AuthStore {
         `SELECT library_items.*,
                 latest_delivery.id AS delivery_id,
                 latest_delivery.status AS delivery_status,
-                latest_delivery.updated_at AS delivery_updated_at
+                latest_delivery.updated_at AS delivery_updated_at,
+                latest_delivery.batch_id AS delivery_batch_id
          FROM library_items
          LEFT JOIN (
            SELECT kindle_deliveries.*
@@ -471,18 +608,39 @@ export class AuthStore {
         delivery_id?: string;
         delivery_status?: KindleDelivery["status"];
         delivery_updated_at?: string;
+        delivery_batch_id?: string | null;
       })[];
 
-    return rows.map((row) => ({
-      ...toLibraryItem(row),
-      latestDelivery: row.delivery_id
-        ? {
-            id: row.delivery_id,
-            status: row.delivery_status as KindleDelivery["status"],
-            updatedAt: row.delivery_updated_at as string
-          }
-        : null
-    }));
+    const batchStatement = this.db.prepare(
+      "SELECT status, updated_at AS updatedAt FROM kindle_deliveries WHERE user_id = ? AND batch_id = ?"
+    );
+    return rows.map((row) => {
+      if (!row.delivery_id) {
+        return { ...toLibraryItem(row), latestDelivery: null };
+      }
+      const batch = row.delivery_batch_id
+        ? (batchStatement.all(userId, row.delivery_batch_id) as unknown as {
+            status: KindleDelivery["status"];
+            updatedAt: string;
+          }[])
+        : [{ status: row.delivery_status as KindleDelivery["status"], updatedAt: row.delivery_updated_at as string }];
+      const statuses = batch.map((entry) => entry.status);
+      const status: KindleDelivery["status"] = statuses.includes("pending")
+        ? "pending"
+        : statuses.includes("failed")
+          ? "failed"
+          : "sent";
+      return {
+        ...toLibraryItem(row),
+        latestDelivery: {
+          id: row.delivery_id,
+          status,
+          updatedAt: batch.map((entry) => entry.updatedAt).sort().at(-1) as string,
+          sentCount: statuses.filter((entry) => entry === "sent").length,
+          totalCount: batch.length
+        }
+      };
+    });
   }
 
   ensureOpdsToken(userId: string): string {
@@ -701,12 +859,13 @@ export class AuthStore {
     this.db
       .prepare(
         `INSERT INTO kindle_deliveries
-           (id, user_id, library_item_id, title, filename, kindle_email, trigger, status, attempts, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, datetime('now'), datetime('now'))`
+           (id, user_id, batch_id, library_item_id, title, filename, kindle_email, trigger, status, attempts, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, datetime('now'), datetime('now'))`
       )
       .run(
         id,
         userId,
+        input.batchId ?? null,
         input.libraryItemId ?? null,
         input.title,
         input.filename,
@@ -909,6 +1068,18 @@ export class AuthStore {
         expires_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS kindle_devices (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        send_by_default INTEGER NOT NULL DEFAULT 1 CHECK (send_by_default IN (0, 1)),
+        is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(user_id, email)
+      );
+
       CREATE TABLE IF NOT EXISTS api_tokens (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -922,6 +1093,14 @@ export class AuthStore {
     this.addColumnIfMissing("users", "subscription_retention_days", "INTEGER NOT NULL DEFAULT 30");
     this.addColumnIfMissing("users", "opds_token", "TEXT");
     this.addColumnIfMissing("users", "display_name", "TEXT");
+    this.addColumnIfMissing("kindle_deliveries", "batch_id", "TEXT");
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_kindle_devices_primary ON kindle_devices(user_id) WHERE is_primary = 1"
+    );
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_kindle_devices_user_name ON kindle_devices(user_id, name COLLATE NOCASE)"
+    );
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_kindle_deliveries_batch ON kindle_deliveries(batch_id)");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_opds_token ON users(opds_token)");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_kindle_deliveries_user_updated ON kindle_deliveries(user_id, updated_at)");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_temporary_files_expires_at ON temporary_files(expires_at)");
@@ -931,6 +1110,114 @@ export class AuthStore {
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_kindle_deliveries_item_updated ON kindle_deliveries(library_item_id, updated_at)"
     );
+    this.reconcileKindleDevices();
+  }
+
+  /**
+   * users.kindle_email mirrors the primary device so older app images (which
+   * only know that column) keep working. On startup, reconcile any changes an
+   * older image made to the mirror back into kindle_devices.
+   */
+  private reconcileKindleDevices(): void {
+    const rows = this.db
+      .prepare(
+        `SELECT users.id AS userId, users.kindle_email AS legacyEmail, primary_device.email AS primaryEmail,
+                (SELECT COUNT(*) FROM kindle_devices WHERE kindle_devices.user_id = users.id) AS deviceCount
+         FROM users
+         LEFT JOIN kindle_devices primary_device
+           ON primary_device.user_id = users.id AND primary_device.is_primary = 1`
+      )
+      .all() as unknown as { userId: string; legacyEmail: string | null; primaryEmail: string | null; deviceCount: number }[];
+
+    for (const row of rows) {
+      const legacyEmail = row.legacyEmail?.trim().toLowerCase() || null;
+      if (legacyEmail === (row.primaryEmail ?? null) && (row.deviceCount > 0) === Boolean(row.primaryEmail)) {
+        continue;
+      }
+      this.transaction(() => {
+        if (!legacyEmail) {
+          this.db.prepare("DELETE FROM kindle_devices WHERE user_id = ?").run(row.userId);
+          this.syncKindleDevices(row.userId);
+        } else {
+          this.applyLegacyKindleEmail(row.userId, legacyEmail);
+        }
+      });
+    }
+  }
+
+  private applyLegacyKindleEmail(userId: string, email: string): void {
+    const devices = this.listKindleDevices(userId);
+    const existing = devices.find((device) => device.email === email);
+    const primary = devices.find((device) => device.isPrimary);
+    if (existing) {
+      if (primary && primary.id !== existing.id) {
+        this.db.prepare("UPDATE kindle_devices SET is_primary = 0 WHERE id = ?").run(primary.id);
+      }
+      this.db
+        .prepare(
+          "UPDATE kindle_devices SET is_primary = 1, send_by_default = 1, updated_at = datetime('now') WHERE id = ?"
+        )
+        .run(existing.id);
+    } else if (primary) {
+      this.db
+        .prepare("UPDATE kindle_devices SET email = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(email, primary.id);
+    } else {
+      const name = devices.some((device) => device.name.toLowerCase() === "kindle") ? `Kindle ${devices.length + 1}` : "Kindle";
+      this.db
+        .prepare(
+          `INSERT INTO kindle_devices (id, user_id, name, email, send_by_default, is_primary, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 1, 1, datetime('now'), datetime('now'))`
+        )
+        .run(randomUUID(), userId, name, email);
+    }
+    this.syncKindleDevices(userId);
+  }
+
+  /** Re-establishes device invariants and refreshes the users.kindle_email mirror. */
+  private syncKindleDevices(userId: string): void {
+    let devices = this.listKindleDevices(userId);
+    if (devices.length > 0 && !devices.some((device) => device.isPrimary)) {
+      const promoted = devices.find((device) => device.sendByDefault) ?? devices[0];
+      this.db.prepare("UPDATE kindle_devices SET is_primary = 1 WHERE id = ?").run(promoted.id);
+      devices = this.listKindleDevices(userId);
+    }
+    const primary = devices.find((device) => device.isPrimary);
+    if (primary && !devices.some((device) => device.sendByDefault)) {
+      this.db.prepare("UPDATE kindle_devices SET send_by_default = 1 WHERE id = ?").run(primary.id);
+    }
+    this.db
+      .prepare("UPDATE users SET kindle_email = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(primary?.email ?? null, userId);
+  }
+
+  private assertDeviceUnique(devices: KindleDevice[], candidate: { name: string; email: string }): void {
+    if (devices.some((device) => device.email === candidate.email)) {
+      throw badRequest("That Kindle email is already added.");
+    }
+    if (devices.some((device) => device.name.toLowerCase() === candidate.name.toLowerCase())) {
+      throw badRequest("You already have a Kindle with that name.");
+    }
+  }
+
+  private transactionDepth = 0;
+
+  private transaction(fn: () => void): void {
+    if (this.transactionDepth > 0) {
+      fn();
+      return;
+    }
+    this.transactionDepth += 1;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      fn();
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    } finally {
+      this.transactionDepth -= 1;
+    }
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
@@ -970,9 +1257,21 @@ interface DbLibraryItem {
   created_at: string;
 }
 
+interface DbKindleDevice {
+  id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  send_by_default: number;
+  is_primary: number;
+  created_at: string;
+  updated_at: string;
+}
+
 interface DbKindleDelivery {
   id: string;
   user_id: string;
+  batch_id?: string | null;
   library_item_id?: string;
   title: string;
   filename: string;
@@ -1080,10 +1379,44 @@ function toLibraryItem(row: DbLibraryItem): LibraryItem {
   };
 }
 
+function toKindleDevice(row: DbKindleDevice): KindleDevice {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    email: row.email,
+    sendByDefault: row.send_by_default === 1,
+    isPrimary: row.is_primary === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function badRequest(message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode: 400 });
+}
+
+function normalizeDeviceName(value: string | undefined): string {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name || name.length > MAX_KINDLE_DEVICE_NAME_LENGTH) {
+    throw badRequest(`Kindle name must be 1-${MAX_KINDLE_DEVICE_NAME_LENGTH} characters.`);
+  }
+  return name;
+}
+
+function normalizeDeviceEmail(value: string | undefined): string {
+  try {
+    return normalizeEmail(typeof value === "string" ? value : "");
+  } catch {
+    throw badRequest("Please enter a valid Kindle email address.");
+  }
+}
+
 function toKindleDelivery(row: DbKindleDelivery): KindleDelivery {
   return {
     id: row.id,
     userId: row.user_id,
+    batchId: row.batch_id || undefined,
     libraryItemId: row.library_item_id || undefined,
     title: row.title,
     filename: row.filename,

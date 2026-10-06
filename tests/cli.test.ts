@@ -524,4 +524,83 @@ describe("CLI config", () => {
       token: undefined
     });
   });
+
+  describe("multiple Kindles", () => {
+    const partial: SendArticleResult = {
+      ...articleSent,
+      deliveries: [
+        { id: "d1", status: "sent", kindleEmail: "pw@kindle.com" },
+        { id: "d2", status: "failed", kindleEmail: "scribe@kindle.com", error: "smtp" }
+      ]
+    };
+
+    it("send passes --kindle selections and exits 4 when any Kindle failed", async () => {
+      const send = vi.fn().mockResolvedValue(partial);
+      const client = makeClient({ sendArticle: send });
+      const { io, out } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSend(deps, { positional: "https://ex/a", kindles: ["pw", "scribe"], url: "", token: "" })
+      );
+      expect(send.mock.calls[0][1].kindles).toEqual(["pw", "scribe"]);
+      expect(code).toBe(EXIT_CODES.DELIVERY);
+      const text = out.join("");
+      expect(text).toContain("delivery=1/2 sent");
+      expect(text).toContain("pw@kindle.com=sent");
+      expect(text).toContain("scribe@kindle.com=failed (smtp)");
+    });
+
+    it("send-file passes --kindle selections and exits 4 on partial failure", async () => {
+      const pdfPath = path.join(tempDir, "doc.pdf");
+      await writeFile(pdfPath, "%PDF-1.4");
+      const send = vi.fn().mockResolvedValue(partial);
+      const client = makeClient({ sendFile: send } as any);
+      const { io } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      const code = await runWithExit(() =>
+        runSendFile(deps, { positional: pdfPath, kindles: ["scribe"], url: "", token: "" })
+      );
+      expect(send.mock.calls[0][1].kindles).toEqual(["scribe"]);
+      expect(code).toBe(EXIT_CODES.DELIVERY);
+    });
+
+    it("send-batch passes --kindle selections to the client", async () => {
+      async function* events(): AsyncIterable<BatchEvent> {
+        yield { type: "start", total: 1 };
+        yield { type: "item", index: 0, url: "https://ex/a", ok: true, deduped: false, result: articleSent };
+        yield { type: "done", total: 1, sent: 1, deduped: 0, failed: 0 };
+      }
+      const batch = vi.fn().mockReturnValue(events());
+      const client = makeClient({ sendBatch: batch });
+      const { io } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      await runWithExit(() =>
+        runSendBatch(deps, { urls: ["https://ex/a"], kindles: ["scribe"], url: "", token: "" })
+      );
+      expect(batch.mock.calls[0][1].kindles).toEqual(["scribe"]);
+    });
+
+    it("status lists every Kindle", async () => {
+      const client = makeClient({
+        status: vi.fn().mockResolvedValue({
+          reachable: true,
+          authOk: true,
+          smtpConfigured: true,
+          kindleEmail: "pw@kindle.com",
+          kindles: [
+            { id: "k1", name: "Paperwhite", email: "pw@kindle.com", sendByDefault: true, isPrimary: true },
+            { id: "k2", name: "Scribe", email: "scribe@kindle.com", sendByDefault: false, isPrimary: false }
+          ],
+          recent: []
+        })
+      });
+      const { io, out } = makeIO({ KINDLEFLOW_URL: "http://t", KINDLEFLOW_TOKEN: "kf_pat_x" });
+      const deps: CliDeps = { io, makeClient: () => client, configPath: path.join(tempDir, "config.yaml") };
+      await runWithExit(() => runStatus(deps, { url: "", token: "" }));
+      const text = out.join("");
+      expect(text).toContain("kindles:");
+      expect(text).toContain("Paperwhite <pw@kindle.com> (default)");
+      expect(text).toContain("Scribe <scribe@kindle.com>");
+    });
+  });
 });

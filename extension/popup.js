@@ -62,9 +62,9 @@ async function sendCurrentPage() {
     latestGeneratedFile = generated;
     showResult(appUrl, imported.article.title, generated);
     if (generated.sentToKindle) {
-      setStatus(deliveryMessage(generated.delivery, "EPUB generated and sent to Kindle."));
-    } else if (generated.delivery?.status === "failed") {
-      setStatus(deliveryMessage(generated.delivery, "EPUB generated, but Kindle email failed."), true);
+      setStatus(deliveryMessage(generated, "EPUB generated and sent to Kindle."));
+    } else if (deliveriesOf(generated).some((delivery) => delivery.status === "failed")) {
+      setStatus(deliveryMessage(generated, "EPUB generated, but Kindle email failed."), true);
     } else {
       setStatus("EPUB generated. Use the buttons below to download or send it.");
     }
@@ -88,10 +88,11 @@ async function sendGeneratedFileToKindle() {
     latestGeneratedFile = {
       ...latestGeneratedFile,
       sentToKindle: response.sent,
-      delivery: response.delivery
+      delivery: response.delivery,
+      deliveries: response.deliveries
     };
-    manualSendButton.hidden = response.sent;
-    setStatus(deliveryMessage(response.delivery, "Sent to Kindle."));
+    manualSendButton.hidden = !canSendManually(latestGeneratedFile);
+    setStatus(deliveryMessage(response, "Sent to Kindle."), !response.sent);
   } finally {
     setWorking(false);
   }
@@ -196,7 +197,7 @@ function showResult(appUrl, title, generatedFile) {
   resultFilenameElement.textContent = generatedFile.filename;
   downloadLink.href = absoluteAppUrl(appUrl, generatedFile.downloadUrl);
   openAppLink.href = appUrl;
-  manualSendButton.hidden = generatedFile.sentToKindle;
+  manualSendButton.hidden = !canSendManually(generatedFile);
   resultElement.hidden = false;
 }
 
@@ -210,15 +211,33 @@ function absoluteAppUrl(appUrl, path) {
   return new URL(path, `${appUrl}/`).toString();
 }
 
-function deliveryMessage(delivery, fallback) {
-  if (!delivery) {
-    return fallback;
+function deliveriesOf(response) {
+  if (Array.isArray(response.deliveries)) {
+    return response.deliveries;
   }
-  if (delivery.status === "sent") {
+  return response.delivery ? [response.delivery] : [];
+}
+
+// Once any Kindle has the file, resending would duplicate it there; retry failures from the app instead.
+function canSendManually(generatedFile) {
+  return !generatedFile.sentToKindle && !deliveriesOf(generatedFile).some((delivery) => delivery.status === "sent");
+}
+
+function deliveryMessage(response, fallback) {
+  const deliveries = deliveriesOf(response);
+  const sent = deliveries.filter((delivery) => delivery.status === "sent");
+  const failed = deliveries.filter((delivery) => delivery.status === "failed");
+  if (failed.length > 0 && sent.length > 0) {
+    return `${fallback} Sent to ${sent.length} of ${deliveries.length} Kindles; retry the rest from KindleFlow. ${failed[0].error ?? ""}`.trim();
+  }
+  if (failed.length > 0) {
+    return `${fallback} ${failed[0].error ?? "Unknown delivery error."}`;
+  }
+  if (sent.length > 1) {
+    return `${fallback} Gmail accepted the email for ${sent.length} Kindles.`;
+  }
+  if (sent.length === 1) {
     return `${fallback} Gmail accepted the Kindle email.`;
-  }
-  if (delivery.status === "failed") {
-    return `${fallback} ${delivery.error ?? "Unknown delivery error."}`;
   }
   return fallback;
 }
