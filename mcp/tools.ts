@@ -37,6 +37,16 @@ function err(message: string, code?: string): ToolResult {
 }
 
 const sendModeSchema = z.enum(["auto", "force", "none"]).optional();
+const kindlesSchema = z
+  .array(z.string())
+  .optional()
+  .describe("Kindle names or emails to send to (see kindleflow.list_kindles). Omit to use the send-by-default Kindles.");
+
+function kindlesInput(input: Record<string, unknown>): { kindles?: string[] } {
+  if (!Array.isArray(input.kindles)) return {};
+  const kindles = input.kindles.filter((value): value is string => typeof value === "string");
+  return kindles.length > 0 ? { kindles } : {};
+}
 
 export function createTools(client: KindleflowClient): ToolDefinition[] {
   return [
@@ -48,14 +58,16 @@ export function createTools(client: KindleflowClient): ToolDefinition[] {
         url: z.string().describe("Article or PDF URL to import."),
         title: z.string().optional().describe("Optional title override."),
         sendMode: sendModeSchema.describe(
-          "auto = respect user's auto-send setting (default); force = always send; none = generate only."
-        )
+          "auto = respect user's auto-send setting (default); force = always send; none = generate only. Passing kindles implies force unless none."
+        ),
+        kindles: kindlesSchema
       },
       handler: async (input) => {
         try {
           const result = await client.sendArticle(String(input.url), {
             title: typeof input.title === "string" ? input.title : undefined,
-            sendMode: (input.sendMode as "auto" | "force" | "none" | undefined) ?? "auto"
+            sendMode: (input.sendMode as "auto" | "force" | "none" | undefined) ?? "auto",
+            ...kindlesInput(input)
           });
           return ok(result);
         } catch (e) {
@@ -69,12 +81,14 @@ export function createTools(client: KindleflowClient): ToolDefinition[] {
         "Upload a local PDF or EPUB file from the MCP server host filesystem to KindleFlow and deliver it to Kindle. The path is resolved on the machine running the MCP server, not the user's browser or chat client. Accepts only PDF and EPUB files up to 50 MB.",
       inputSchema: {
         path: z.string().describe("Absolute or relative filesystem path on the MCP server host to a PDF or EPUB file."),
-        title: z.string().optional().describe("Optional title override for the library and delivery.")
+        title: z.string().optional().describe("Optional title override for the library and delivery."),
+        kindles: kindlesSchema
       },
       handler: async (input) => {
         try {
           const result = await client.sendFile(String(input.path), {
-            title: typeof input.title === "string" ? input.title : undefined
+            title: typeof input.title === "string" ? input.title : undefined,
+            ...kindlesInput(input)
           });
           return ok(result);
         } catch (e) {
@@ -87,7 +101,8 @@ export function createTools(client: KindleflowClient): ToolDefinition[] {
       description: "Import a list of URLs in turn. Emits structured per-item results.",
       inputSchema: {
         urls: z.array(z.string()),
-        sendMode: sendModeSchema
+        sendMode: sendModeSchema,
+        kindles: kindlesSchema
       },
       handler: async (input, ctx) => {
         const urls = Array.isArray(input.urls) ? (input.urls as string[]) : [];
@@ -95,7 +110,7 @@ export function createTools(client: KindleflowClient): ToolDefinition[] {
         const events: unknown[] = [];
         let total = 0;
         try {
-          for await (const ev of client.sendBatch(urls, { sendMode, signal: ctx?.signal })) {
+          for await (const ev of client.sendBatch(urls, { sendMode, ...kindlesInput(input), signal: ctx?.signal })) {
             events.push(ev);
             if (ev.type === "start") total = ev.total;
             if (ev.type === "item" && ctx?.onProgress) {
@@ -108,6 +123,18 @@ export function createTools(client: KindleflowClient): ToolDefinition[] {
             }
           }
           return ok({ events });
+        } catch (e) {
+          return err(e instanceof Error ? e.message : String(e), (e as { code?: string }).code);
+        }
+      }
+    },
+    {
+      name: "kindleflow.list_kindles",
+      description: "List the Kindles on this account and which ones receive automatic sends.",
+      inputSchema: {},
+      handler: async () => {
+        try {
+          return ok({ kindles: await client.listKindles() });
         } catch (e) {
           return err(e instanceof Error ? e.message : String(e), (e as { code?: string }).code);
         }

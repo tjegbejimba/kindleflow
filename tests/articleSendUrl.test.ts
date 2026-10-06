@@ -165,6 +165,65 @@ describe("sendArticleByUrl orchestration", () => {
     expect(mailer).toHaveBeenCalledTimes(1);
   });
 
+  it("auto-sends to every send-by-default Kindle", async () => {
+    const user = makeUser({ autoSend: true, kindleEmail: "tj@kindle.com" });
+    store.addKindleDevice(user.id, { name: "Scribe", email: "scribe@kindle.com" });
+    store.addKindleDevice(user.id, { name: "Spare", email: "spare@kindle.com", sendByDefault: false });
+    const mailer = vi.fn().mockResolvedValue({ messageId: "m", response: "ok" });
+    const deps: SendArticleByUrlDeps = {
+      store,
+      config: makeConfig(),
+      log: silentLog,
+      fetchAndExtractArticle: vi.fn().mockResolvedValue(makeArticleFetch("https://ex/multi")),
+      generateKindleFile: vi.fn().mockResolvedValue(makeFakeGenerated()),
+      saveKindlePdf: vi.fn(),
+      sendFileToKindle: mailer
+    };
+
+    const result = await sendArticleByUrl(deps, { user, url: "https://ex/multi", sendMode: "auto" });
+
+    expect(mailer.mock.calls.map((call) => call[3])).toEqual(["tj@kindle.com", "scribe@kindle.com"]);
+    expect(result.deliveries.map((delivery) => delivery.kindleEmail)).toEqual(["tj@kindle.com", "scribe@kindle.com"]);
+    expect(result.delivery?.kindleEmail).toBe("tj@kindle.com");
+  });
+
+  it("sends only to selected Kindles, even when autoSend=false", async () => {
+    const user = makeUser({ autoSend: false, kindleEmail: "tj@kindle.com" });
+    store.addKindleDevice(user.id, { name: "Scribe", email: "scribe@kindle.com", sendByDefault: false });
+    const mailer = vi.fn().mockResolvedValue({ messageId: "m", response: "ok" });
+    const deps: SendArticleByUrlDeps = {
+      store,
+      config: makeConfig(),
+      log: silentLog,
+      fetchAndExtractArticle: vi.fn().mockResolvedValue(makeArticleFetch("https://ex/pick")),
+      generateKindleFile: vi.fn().mockResolvedValue(makeFakeGenerated()),
+      saveKindlePdf: vi.fn(),
+      sendFileToKindle: mailer
+    };
+
+    const result = await sendArticleByUrl(deps, { user, url: "https://ex/pick", sendMode: "auto", kindles: ["scribe"] });
+    expect(mailer.mock.calls.map((call) => call[3])).toEqual(["scribe@kindle.com"]);
+    expect(result.deliveries).toHaveLength(1);
+  });
+
+  it("rejects unknown Kindle selectors before fetching", async () => {
+    const user = makeUser({ autoSend: true, kindleEmail: "tj@kindle.com" });
+    const fetcher = vi.fn();
+    const deps: SendArticleByUrlDeps = {
+      store,
+      config: makeConfig(),
+      log: silentLog,
+      fetchAndExtractArticle: fetcher,
+      generateKindleFile: vi.fn(),
+      saveKindlePdf: vi.fn(),
+      sendFileToKindle: vi.fn()
+    };
+    await expect(
+      sendArticleByUrl(deps, { user, url: "https://ex/nope", sendMode: "force", kindles: ["Oasis"] })
+    ).rejects.toThrow(/Unknown Kindle "Oasis"/);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("never sends in sendMode=none, even with autoSend=true", async () => {
     const user = makeUser({ autoSend: true, kindleEmail: "tj@kindle.com" });
     const mailer = vi.fn();

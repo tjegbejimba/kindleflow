@@ -26,9 +26,10 @@ const articleResult: SendArticleResult = {
 };
 
 describe("MCP tool handlers", () => {
-  it("registers exactly five tools including send_file", () => {
+  it("registers exactly six tools including send_file and list_kindles", () => {
     const tools = createTools(makeClient());
     expect(tools.map((t) => t.name).sort()).toEqual([
+      "kindleflow.list_kindles",
       "kindleflow.list_recent",
       "kindleflow.retry_delivery",
       "kindleflow.send_article",
@@ -43,9 +44,10 @@ describe("MCP tool handlers", () => {
       tools.map((t) => [t.name, Object.keys(t.inputSchema)])
     );
     expect(summary).toEqual({
-      "kindleflow.send_article": ["url", "title", "sendMode"],
-      "kindleflow.send_batch": ["urls", "sendMode"],
-      "kindleflow.send_file": ["path", "title"],
+      "kindleflow.send_article": ["url", "title", "sendMode", "kindles"],
+      "kindleflow.send_batch": ["urls", "sendMode", "kindles"],
+      "kindleflow.send_file": ["path", "title", "kindles"],
+      "kindleflow.list_kindles": [],
       "kindleflow.list_recent": ["limit"],
       "kindleflow.retry_delivery": ["deliveryId"]
     });
@@ -167,6 +169,34 @@ describe("MCP tool handlers", () => {
       const content = res.structuredContent as { delivery?: { status: string; error?: string } };
       expect(content.delivery?.status).toBe("failed");
       expect(content.delivery?.error).toBe("SMTP error");
+    });
+  });
+
+  describe("multiple Kindles", () => {
+    it("send_article, send_file and send_batch forward selected Kindles", async () => {
+      const sendArticle = vi.fn().mockResolvedValue(articleResult);
+      const sendFile = vi.fn().mockResolvedValue(articleResult);
+      const sendBatch = vi.fn().mockReturnValue(
+        (async function* () {
+          yield { type: "start" as const, total: 0 };
+        })()
+      );
+      const tools = createTools(makeClient({ sendArticle, sendFile, sendBatch }));
+      const byName = (name: string) => tools.find((t) => t.name === name)!;
+      await byName("kindleflow.send_article").handler({ url: "https://ex/a", kindles: ["Scribe"] });
+      await byName("kindleflow.send_file").handler({ path: "/tmp/a.pdf", kindles: ["Scribe"] });
+      await byName("kindleflow.send_batch").handler({ urls: [], kindles: ["Scribe"] });
+      expect(sendArticle.mock.calls[0][1].kindles).toEqual(["Scribe"]);
+      expect(sendFile.mock.calls[0][1].kindles).toEqual(["Scribe"]);
+      expect(sendBatch.mock.calls[0][1].kindles).toEqual(["Scribe"]);
+    });
+
+    it("list_kindles returns the configured devices", async () => {
+      const devices = [{ id: "k1", name: "Paperwhite", email: "pw@kindle.com", sendByDefault: true, isPrimary: true }];
+      const listKindles = vi.fn().mockResolvedValue(devices);
+      const tool = createTools(makeClient({ listKindles })).find((t) => t.name === "kindleflow.list_kindles")!;
+      const res = await tool.handler({});
+      expect((res.structuredContent as { kindles: unknown }).kindles).toEqual(devices);
     });
   });
 });

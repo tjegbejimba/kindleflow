@@ -1,6 +1,13 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { GeneratedFileActions } from "./GeneratedFileActions.js";
+import { KindleDeviceList, KindleTargetPicker } from "./KindleDeviceSettings.js";
+import {
+  defaultKindleIds,
+  deliveryToast,
+  kindleSelectionForRequest,
+  type KindleDeviceView
+} from "./kindleDevices.js";
 import { visibleGeneratedFileAfterDelivery } from "./generatedFileVisibility.js";
 import { OnboardingGate } from "./OnboardingGate.js";
 import {
@@ -65,6 +72,7 @@ interface PdfFetchResult {
     downloadUrl: string;
     sentToKindle: boolean;
     delivery?: KindleDelivery;
+    deliveries?: KindleDelivery[];
   };
 }
 
@@ -81,6 +89,12 @@ interface GeneratedFile {
   downloadUrl: string;
   sentToKindle: boolean;
   delivery?: KindleDelivery;
+  deliveries?: KindleDelivery[];
+}
+
+interface DeliveryResponse {
+  delivery?: KindleDelivery;
+  deliveries?: KindleDelivery[];
 }
 
 interface Subscription {
@@ -250,6 +264,8 @@ function App() {
   const [deliveries, setDeliveries] = React.useState<KindleDelivery[]>([]);
   const [opdsUrl, setOpdsUrl] = React.useState("");
   const [kindleEmail, setKindleEmail] = React.useState("");
+  const [kindleDevices, setKindleDevices] = React.useState<KindleDeviceView[]>([]);
+  const [selectedKindleIds, setSelectedKindleIds] = React.useState<string[]>([]);
   const [autoSendToKindle, setAutoSendToKindle] = React.useState(true);
   const [subscriptionRetentionDays, setSubscriptionRetentionDays] = React.useState(30);
   const [url, setUrl] = React.useState("");
@@ -277,13 +293,9 @@ function App() {
   }, []);
 
   const flashDeliveryToast = React.useCallback(
-    (delivery: KindleDelivery | undefined, action: string) => {
-      if (!delivery) return;
-      if (delivery.status === "sent") {
-        flashToast("success", `${action} sent to ${delivery.kindleEmail}.`);
-      } else if (delivery.status === "failed") {
-        flashToast("error", `${action} failed: ${delivery.error ?? "unknown error"}`);
-      }
+    (response: DeliveryResponse, action: string) => {
+      const toastContent = deliveryToast(deliveriesFrom(response), action);
+      if (toastContent) flashToast(toastContent.kind, toastContent.message);
     },
     [flashToast]
   );
@@ -309,6 +321,7 @@ function App() {
     | "subscribe"
     | "poll"
     | "upload"
+    | "kindles"
     | null
   >(null);
 
@@ -343,6 +356,7 @@ function App() {
           void loadSubscriptions();
           void loadOpdsUrl();
           void loadDeliveries();
+          void loadKindles();
         }
       })
       .catch((err) => {
@@ -415,18 +429,20 @@ function App() {
     }
   }
 
-  async function persistProfile() {
+  async function persistProfile({ includeKindleEmail }: { includeKindleEmail: boolean }) {
     setBusyAction("profile");
     setError("");
     setStatus("Saving profile...");
 
     try {
+      // Kindle addresses are managed via /api/kindles once onboarding is done.
       const response = await apiPatch<{ user: UserProfile }>("/api/me", {
-        kindleEmail,
+        ...(includeKindleEmail ? { kindleEmail } : {}),
         autoSendToKindle,
         subscriptionRetentionDays
       });
       applyUser(response.user);
+      if (includeKindleEmail) await loadKindles();
       setStatus("Profile saved.");
     } catch (err) {
       setStatus("");
@@ -438,7 +454,7 @@ function App() {
 
   async function saveProfile(event: React.FormEvent) {
     event.preventDefault();
-    await persistProfile();
+    await persistProfile({ includeKindleEmail: false });
   }
 
   async function fetchArticle(event: React.FormEvent) {
@@ -459,12 +475,13 @@ function App() {
           mimeType: response.generated.mimeType,
           downloadUrl: response.generated.downloadUrl,
           sentToKindle: response.generated.sentToKindle,
-          delivery: response.generated.delivery
+          delivery: response.generated.delivery,
+          deliveries: response.generated.deliveries
         });
         setGeneratedFileExpanded(true);
         await loadDeliveries();
-        setStatus(deliveryStatusMessage(response.generated.delivery, "PDF imported."));
-        flashDeliveryToast(response.generated.delivery, "PDF");
+        setStatus(deliveryStatusMessage(deliveriesFrom(response.generated), "PDF imported."));
+        flashDeliveryToast(response.generated, "PDF");
       } else {
         setResult(response);
         setPdfAnalysis(null);
@@ -517,8 +534,8 @@ function App() {
       setGeneratedFile(visibleFile);
       setGeneratedFileExpanded(Boolean(visibleFile));
       await loadDeliveries();
-      setStatus(deliveryStatusMessage(response.delivery, "EPUB generated."));
-      flashDeliveryToast(response.delivery, "EPUB");
+      setStatus(deliveryStatusMessage(deliveriesFrom(response), "EPUB generated."));
+      flashDeliveryToast(response, "EPUB");
     } catch (err) {
       setError(errorMessage(err));
       setStatus("");
@@ -534,16 +551,18 @@ function App() {
     setStatus("Sending to Kindle...");
 
     try {
-      const response = await apiPost<{ sent: boolean; delivery: KindleDelivery }>("/api/articles/send", {
-        filename: generatedFile.filename
+      const response = await apiPost<{ sent: boolean } & DeliveryResponse>("/api/articles/send", {
+        filename: generatedFile.filename,
+        ...kindleSelectionForRequest(kindleDevices, selectedKindleIds)
       });
       await loadDeliveries();
-      setStatus(deliveryStatusMessage(response.delivery, "Sent to Kindle."));
-      flashDeliveryToast(response.delivery, "EPUB");
+      setStatus(deliveryStatusMessage(deliveriesFrom(response), "Sent to Kindle."));
+      flashDeliveryToast(response, getFileTypeLabel(generatedFile.mimeType));
       const visibleFile = visibleGeneratedFileAfterDelivery({
         ...generatedFile,
         sentToKindle: response.sent,
-        delivery: response.delivery
+        delivery: response.delivery,
+        deliveries: response.deliveries
       });
       setGeneratedFile(visibleFile);
       setGeneratedFileExpanded(Boolean(visibleFile));
@@ -596,6 +615,55 @@ function App() {
     setSubscriptions(response.subscriptions);
   }
 
+  async function loadKindles() {
+    const response = await apiGet<{ devices: KindleDeviceView[] }>("/api/kindles");
+    setKindleDevices(response.devices);
+    setSelectedKindleIds(defaultKindleIds(response.devices));
+  }
+
+  async function changeKindles(work: () => Promise<{ devices: KindleDeviceView[] }>, progress: string, done: string) {
+    setBusyAction("kindles");
+    setError("");
+    setStatus(progress);
+    try {
+      const response = await work();
+      setKindleDevices(response.devices);
+      setSelectedKindleIds(defaultKindleIds(response.devices));
+      // The primary Kindle is mirrored onto the profile, which gates the send buttons.
+      const me = await apiGet<{ user: UserProfile | null }>("/api/me");
+      applyUser(me.user);
+      setStatus(done);
+      return true;
+    } catch (err) {
+      setStatus("");
+      setError(errorMessage(err));
+      return false;
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  function addKindle(name: string, email: string) {
+    return changeKindles(
+      () => apiPost("/api/kindles", { name: name || undefined, email }),
+      "Adding Kindle...",
+      "Kindle added. Make sure the approved sender is on its Amazon account."
+    );
+  }
+
+  function removeKindle(device: KindleDeviceView) {
+    if (!window.confirm(`Remove ${device.name} (${device.email})?`)) return;
+    void changeKindles(() => apiDelete(`/api/kindles/${device.id}`), "Removing Kindle...", `${device.name} removed.`);
+  }
+
+  function toggleKindleDefault(device: KindleDeviceView, sendByDefault: boolean) {
+    void changeKindles(
+      () => apiPatch(`/api/kindles/${device.id}`, { sendByDefault }),
+      "Saving Kindle...",
+      sendByDefault ? `${device.name} will receive automatic sends.` : `${device.name} will only receive manual sends.`
+    );
+  }
+
   async function loadDeliveries() {
     const response = await apiGet<{ deliveries: KindleDelivery[] }>("/api/deliveries");
     setDeliveries(response.deliveries);
@@ -629,10 +697,13 @@ function App() {
     setStatus("Sending latest EPUB to Kindle...");
 
     try {
-      const response = await apiPost<{ delivery: KindleDelivery }>("/api/deliveries/latest", {});
+      const response = await apiPost<DeliveryResponse>(
+        "/api/deliveries/latest",
+        kindleSelectionForRequest(kindleDevices, selectedKindleIds)
+      );
       await loadDeliveries();
-      setStatus(deliveryStatusMessage(response.delivery, "Latest EPUB sent to Kindle."));
-      flashDeliveryToast(response.delivery, "Latest EPUB");
+      setStatus(deliveryStatusMessage(deliveriesFrom(response), "Latest EPUB sent to Kindle."));
+      flashDeliveryToast(response, "Latest EPUB");
     } catch (err) {
       setStatus("");
       setError(errorMessage(err));
@@ -647,10 +718,13 @@ function App() {
     setStatus("Sending a test EPUB to Kindle...");
 
     try {
-      const response = await apiPost<{ delivery: KindleDelivery }>("/api/deliveries/test", {});
+      const response = await apiPost<DeliveryResponse>(
+        "/api/deliveries/test",
+        kindleSelectionForRequest(kindleDevices, selectedKindleIds)
+      );
       await loadDeliveries();
-      setStatus(deliveryStatusMessage(response.delivery, "Test EPUB sent to Kindle."));
-      flashDeliveryToast(response.delivery, "Test EPUB");
+      setStatus(deliveryStatusMessage(deliveriesFrom(response), "Test EPUB sent to Kindle."));
+      flashDeliveryToast(response, "Test EPUB");
     } catch (err) {
       setStatus("");
       setError(errorMessage(err));
@@ -668,11 +742,16 @@ function App() {
     setStatus("Uploading file...");
 
     try {
+      // Text fields must precede the file part so the server's multipart parser sees them.
       const formData = new FormData();
-      formData.append("file", selectedFile);
       if (uploadTitle.trim()) {
         formData.append("title", uploadTitle.trim());
       }
+      const { kindles } = kindleSelectionForRequest(kindleDevices, selectedKindleIds);
+      if (kindles) {
+        formData.append("kindles", kindles.join(","));
+      }
+      formData.append("file", selectedFile);
 
       const res = await fetch("/api/files/upload", {
         method: "POST",
@@ -685,8 +764,9 @@ function App() {
         throw new Error(errorData.error ?? `HTTP ${res.status}`);
       }
 
-      const data = await res.json();
-      setStatus(`File uploaded: ${data.title}`);
+      const data = (await res.json()) as { title: string } & DeliveryResponse;
+      setStatus(deliveryStatusMessage(deliveriesFrom(data), `File uploaded: ${data.title}.`));
+      flashDeliveryToast(data, "Upload");
       setSelectedFile(null);
       setUploadTitle("");
       await loadDeliveries();
@@ -704,10 +784,10 @@ function App() {
     setStatus("Retrying Kindle delivery...");
 
     try {
-      const response = await apiPost<{ delivery: KindleDelivery }>(`/api/deliveries/${deliveryId}/retry`, {});
+      const response = await apiPost<DeliveryResponse>(`/api/deliveries/${deliveryId}/retry`, {});
       await loadDeliveries();
-      setStatus(deliveryStatusMessage(response.delivery, "Delivery retry sent to Kindle."));
-      flashDeliveryToast(response.delivery, "Retry");
+      setStatus(deliveryStatusMessage(deliveriesFrom(response), "Delivery retry sent to Kindle."));
+      flashDeliveryToast(response, "Retry");
     } catch (err) {
       setStatus("");
       setError(errorMessage(err));
@@ -723,6 +803,9 @@ function App() {
     testDeliverySucceeded: hasSuccessfulDelivery(deliveries)
   });
 
+  const canSendManually = Boolean(config?.emailDeliveryEnabled && user?.kindleEmail);
+  const hasKindleSelection = kindleDevices.length <= 1 || selectedKindleIds.length > 0;
+
   if (user && onboarding.visible) {
     return (
       <main>
@@ -733,7 +816,7 @@ function App() {
           kindleSettingsUrl={config?.kindleSettingsUrl ?? "https://www.amazon.com/hz/mycd/myx#/home/settings/payment"}
           kindleEmail={kindleEmail}
           onKindleEmailChange={setKindleEmail}
-          onSaveKindleEmail={() => void persistProfile()}
+          onSaveKindleEmail={() => void persistProfile({ includeKindleEmail: true })}
           savingEmail={busyAction === "profile"}
           senderConfirmed={senderConfirmed}
           onSenderConfirmedChange={changeSenderConfirmed}
@@ -859,11 +942,21 @@ function App() {
             </section>
           ) : null}
 
+          {generatedFile && canSendManually && !generatedFile.sentToKindle ? (
+            <KindleTargetPicker
+              idPrefix="generated-target"
+              devices={kindleDevices}
+              selectedIds={selectedKindleIds}
+              onChange={setSelectedKindleIds}
+              disabled={isBusy}
+            />
+          ) : null}
+
           {generatedFile ? (
             <GeneratedFileActions
               file={generatedFile}
               fileTypeLabel={getFileTypeLabel(generatedFile.mimeType)}
-              canSendToKindle={Boolean(config?.emailDeliveryEnabled && user.kindleEmail && !generatedFile.sentToKindle)}
+              canSendToKindle={Boolean(canSendManually && hasKindleSelection && !generatedFile.sentToKindle)}
               isBusy={isBusy}
               isExpanded={isGeneratedFileExpanded}
               onExpandedChange={setGeneratedFileExpanded}
@@ -894,6 +987,15 @@ function App() {
               accept=".pdf,.epub"
               onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
             />
+            {selectedFile && canSendManually ? (
+              <KindleTargetPicker
+                idPrefix="upload-target"
+                devices={kindleDevices}
+                selectedIds={selectedKindleIds}
+                onChange={setSelectedKindleIds}
+                disabled={isBusy}
+              />
+            ) : null}
             {selectedFile ? (
               <>
                 <label htmlFor="upload-title">Title (optional)</label>
@@ -906,7 +1008,7 @@ function App() {
                 />
               </>
             ) : null}
-            <button type="submit" disabled={isBusy || !selectedFile}>
+            <button type="submit" disabled={isBusy || !selectedFile || (canSendManually && !hasKindleSelection)}>
               {busyAction === "upload" ? "Uploading..." : "Upload file"}
             </button>
           </form>
@@ -914,8 +1016,8 @@ function App() {
           <section className="card">
             <h2>Kindle settings</h2>
             <p className="muted">
-              Add your Kindle email address and approve the SMTP sender in Amazon’s “Approved Personal Document E-mail
-              List.”
+              Add each Kindle’s Send-to-Kindle address and approve the SMTP sender in Amazon’s “Approved Personal
+              Document E-mail List.” Kindles marked auto-send receive automatic and subscription deliveries.
             </p>
             {config?.kindleApprovedSender ? (
               <div className="sender-help">
@@ -936,16 +1038,14 @@ function App() {
                 </div>
               </div>
             ) : null}
+            <KindleDeviceList
+              devices={kindleDevices}
+              isBusy={isBusy}
+              onAdd={addKindle}
+              onRemove={removeKindle}
+              onToggleDefault={toggleKindleDefault}
+            />
             <form onSubmit={saveProfile}>
-              <label htmlFor="kindle-email">Kindle email address</label>
-              <input
-                id="kindle-email"
-                type="email"
-                aria-label="Kindle email address"
-                placeholder="name_123@kindle.com"
-                value={kindleEmail}
-                onChange={(event) => setKindleEmail(event.target.value)}
-              />
               <label className="checkbox-row">
                 <input
                   type="checkbox"
@@ -973,12 +1073,21 @@ function App() {
                 {busyAction === "profile" ? "Saving..." : "Save Kindle settings"}
               </button>
             </form>
+            {canSendManually ? (
+              <KindleTargetPicker
+                idPrefix="settings-target"
+                devices={kindleDevices}
+                selectedIds={selectedKindleIds}
+                onChange={setSelectedKindleIds}
+                disabled={isBusy}
+              />
+            ) : null}
             <div className="delivery-actions">
               <button
                 type="button"
                 className="secondary"
                 onClick={sendTestToKindle}
-                disabled={isBusy || !config?.emailDeliveryEnabled || !user.kindleEmail}
+                disabled={isBusy || !canSendManually || !hasKindleSelection}
               >
                 {busyAction === "testDelivery" ? "Sending test..." : "Send test EPUB"}
               </button>
@@ -986,7 +1095,7 @@ function App() {
                 type="button"
                 className="secondary"
                 onClick={sendLatestToKindle}
-                disabled={isBusy || !config?.emailDeliveryEnabled || !user.kindleEmail}
+                disabled={isBusy || !canSendManually || !hasKindleSelection}
               >
                 {busyAction === "latestDelivery" ? "Sending latest..." : "Send latest EPUB now"}
               </button>
@@ -1087,7 +1196,8 @@ function App() {
                         <strong>{delivery.title}</strong>
                         <span>{delivery.filename}</span>
                         <small>
-                          {deliveryStatusLabel(delivery)} · {delivery.trigger} · {formatDate(delivery.updatedAt)}
+                          {deliveryStatusLabel(delivery)} · {delivery.trigger} · {delivery.kindleEmail} ·{" "}
+                          {formatDate(delivery.updatedAt)}
                         </small>
                         {delivery.response ? <small>SMTP: {delivery.response}</small> : null}
                         {delivery.messageId ? <small>Message ID: {delivery.messageId}</small> : null}
@@ -1141,6 +1251,11 @@ async function apiPatch<T = unknown>(url: string, body: unknown): Promise<T> {
   return readApiResponse<T>(response);
 }
 
+async function apiDelete<T = unknown>(url: string): Promise<T> {
+  const response = await fetch(url, { method: "DELETE" });
+  return readApiResponse<T>(response);
+}
+
 async function readApiResponse<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -1191,15 +1306,23 @@ function writeLocalFlag(key: string, value: boolean): void {
   }
 }
 
-function deliveryStatusMessage(delivery: KindleDelivery | undefined, fallback: string): string {
-  if (!delivery) {
-    return fallback;
+function deliveriesFrom(response: DeliveryResponse): KindleDelivery[] {
+  if (response.deliveries) return response.deliveries;
+  return response.delivery ? [response.delivery] : [];
+}
+
+function deliveryStatusMessage(deliveries: KindleDelivery[], fallback: string): string {
+  const failed = deliveries.filter((delivery) => delivery.status === "failed");
+  const sent = deliveries.filter((delivery) => delivery.status === "sent");
+  if (failed.length > 0) {
+    const details = failed.map((delivery) => `${delivery.kindleEmail}: ${delivery.error ?? "unknown error"}`).join("; ");
+    if (sent.length > 0) {
+      return `Sent to ${sent.length} of ${deliveries.length} Kindles. Failed: ${details}. Retry from delivery history.`;
+    }
+    return `${fallback} Kindle email failed (${details}).`;
   }
-  if (delivery.status === "sent") {
+  if (sent.length > 0) {
     return `${fallback} Gmail accepted the Kindle email; check Amazon delivery if it does not appear soon.`;
-  }
-  if (delivery.status === "failed") {
-    return `${fallback} Kindle email failed: ${delivery.error ?? "unknown error"}`;
   }
   return fallback;
 }

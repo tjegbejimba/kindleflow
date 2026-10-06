@@ -13,6 +13,7 @@ Self-hosted article-to-Kindle app for personal use. Paste a public article URL o
 - **Upload local PDF and EPUB files** — send downloaded documents to Kindle or save to library
 - Header-trust authentication: pluggable behind any reverse proxy (Tinyauth, Caddy `forward_auth`, Cloudflare Access)
 - Per-user Kindle email settings and automatic EPUB delivery
+- Multiple Kindles per account: choose which ones receive automatic sends and pick targets for manual sends
 - Kindle delivery history with SMTP response logging, test sends, latest-EPUB sends, and failed-send retry
 - Public Substack/RSS subscriptions with daily polling and dedupe
 - Browser extension for sending rendered paid Substack posts without copying cookies
@@ -55,6 +56,7 @@ kindleflow login --url https://kindleflow.tail217062.ts.net --token kf_pat_…
 kindleflow send https://example.com/article
 kindleflow send https://example.com/article --no-send        # generate only
 kindleflow send https://example.com/article --title "Custom"
+kindleflow send https://example.com/article --kindle Scribe --kindle Paperwhite  # specific Kindles
 
 # Batch import — newline-delimited URLs; lines beginning with # are ignored
 kindleflow send-batch urls.txt
@@ -62,6 +64,7 @@ kindleflow send-batch urls.txt
 # Upload a local PDF or EPUB file
 kindleflow send-file document.pdf
 kindleflow send-file book.epub --title "Custom Title"
+kindleflow send-file book.epub --kindle scribe@kindle.com
 
 # Recent imports + delivery status (table on a TTY, JSON when piped)
 kindleflow latest --limit 10
@@ -69,14 +72,18 @@ kindleflow latest --limit 10
 # Retry a failed Kindle delivery
 kindleflow retry <deliveryId>
 
-# Show reachability, auth, SMTP config, recent deliveries
+# Show reachability, auth, SMTP config, configured Kindles, recent deliveries
 kindleflow status
 ```
+
+`--kindle` (repeatable on `send`, `send-file`, and `send-batch`) takes a Kindle
+name, email, or id. Without it, KindleFlow uses your auto-send Kindles. On
+`send`/`send-batch`, passing `--kindle` always sends, even if auto-send is off.
 
 **Supported file types:** PDF and EPUB only. Files must be under 50 MB.
 
 Exit codes: `0` success, `2` auth failure, `3` import/parse failure, `4`
-delivery failure, `5` network unreachable.
+delivery failure (including any one Kindle failing), `5` network unreachable.
 
 Config precedence: command-line flag → env (`KINDLEFLOW_URL`,
 `KINDLEFLOW_TOKEN`) → `~/.config/kindleflow/config.yaml`.
@@ -106,8 +113,13 @@ environment. Example Claude Desktop entry:
 - `kindleflow.send_article` — Import a URL into KindleFlow, generate an EPUB, and deliver to Kindle.
 - `kindleflow.send_file` — Upload a local PDF or EPUB file from the MCP server host filesystem. **Path semantics:** The `path` argument is resolved on the machine running the MCP server (e.g., your laptop or agent host), not the user's browser or chat client. Accepts only PDF and EPUB files up to 50 MB. Returns structured content including library item ID, delivery status, and any delivery errors.
 - `kindleflow.send_batch` — Import a list of URLs in turn.
+- `kindleflow.list_kindles` — List the account's Kindles and which ones receive automatic sends.
 - `kindleflow.list_recent` — List recent imported items and their latest delivery status.
 - `kindleflow.retry_delivery` — Retry a previously failed Kindle delivery by ID.
+
+`send_article`, `send_file`, and `send_batch` accept an optional `kindles`
+array of Kindle names or emails. Results include a `deliveries` array with one
+entry per Kindle (`delivery` is still the first one, for older clients).
 
 ### API token scope
 
@@ -128,6 +140,17 @@ Open the KindleFlow web app and sign in through your configured reverse proxy (T
 4. Click "Generate EPUB" to create a Kindle-friendly file.
 5. Download the EPUB or let KindleFlow auto-send it to your Kindle email address if you've configured SMTP and Kindle delivery.
 
+### Managing multiple Kindles
+
+The **Kindle settings** card lists every Kindle on your account (up to 10). Add one with a name and its Send-to-Kindle address, and approve the `SMTP_FROM` sender on each Amazon account that owns a Kindle.
+
+- **Auto-send** Kindles receive automatic sends (generate/fetch with auto-send on, uploads, and Substack subscriptions). At least one Kindle must stay on auto-send.
+- With more than one Kindle, a **Send to** picker appears next to manual sends (send generated file, upload, test EPUB, latest EPUB). Your auto-send Kindles are preselected.
+- Each Kindle gets its own delivery-history row, so you can retry just the one that failed. Retrying goes to the same Kindle if it is still on your account, otherwise to your auto-send Kindles.
+- If a subscription post reaches some Kindles but not others, KindleFlow does not try that post again on the next poll. Retry the failed rows from delivery history.
+
+API: `GET/POST /api/kindles` and `PATCH/DELETE /api/kindles/:id` manage devices. The send endpoints (`/api/articles/send`, `/api/articles/send-url`, `/api/deliveries/test`, `/api/deliveries/latest`, and the `kindles` multipart field on `/api/files/upload`, which must come before the file part) accept `kindles`: Kindle ids, names, or emails. Responses include a `deliveries` array.
+
 ### Uploading local PDF or EPUB files
 
 Below the article URL flow, you'll find the **Upload local PDF or EPUB** card. Use this to send files you already have on your device:
@@ -147,7 +170,7 @@ Below the article URL flow, you'll find the **Upload local PDF or EPUB** card. U
 
 **Setup requirements:**
 
-- **Kindle email**: Set your `@kindle.com` address in Settings.
+- **Kindle email**: Add at least one `@kindle.com` address in Settings.
 - **SMTP sender**: The app uses the global `SMTP_FROM` configured by the admin — you don't configure SMTP per-user.
 - **Amazon approval**: Add `SMTP_FROM` to your Amazon "Approved Personal Document E-mail List" (link in Settings).
 
@@ -389,7 +412,7 @@ KindleFlow shows the configured `SMTP_FROM` sender in the profile screen with a 
 
 ## Substack subscriptions
 
-Users can add a public Substack URL such as `https://example.substack.com`; KindleFlow polls the feed at `/feed` daily and sends newly seen posts to the user’s Kindle address. Existing feed posts are marked as seen when the subscription is added so the app does not flood a Kindle with backlog.
+Users can add a public Substack URL such as `https://example.substack.com`; KindleFlow polls the feed at `/feed` daily and sends newly seen posts to the user’s auto-send Kindles. Existing feed posts are marked as seen when the subscription is added so the app does not flood a Kindle with backlog.
 
 Each user can choose how many days of subscription delivery history to keep, from 1 to 365 days. Daily polling skips posts older than that setting and prunes old delivered-post records plus generated EPUB files.
 

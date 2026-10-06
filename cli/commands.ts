@@ -1,6 +1,8 @@
 import {
   createClient,
+  deliveriesOf,
   EXIT_CODES,
+  isFullySent,
   KindleflowError,
   type BatchEvent,
   type KindleflowClient,
@@ -27,6 +29,38 @@ export interface CliDeps {
 export interface CommonFlags {
   url?: string;
   token?: string;
+}
+
+/** Kindle names, emails, or ids from repeated `--kindle` flags. */
+export interface KindleFlags {
+  kindles?: string[];
+}
+
+function kindleOption(flags: KindleFlags): { kindles?: string[] } {
+  return flags.kindles && flags.kindles.length > 0 ? { kindles: flags.kindles } : {};
+}
+
+function anyDeliveryFailed(result: SendArticleResult): boolean {
+  return deliveriesOf(result).some((delivery) => delivery.status === "failed");
+}
+
+function formatDeliveries(result: SendArticleResult): string[] {
+  const deliveries = deliveriesOf(result);
+  if (deliveries.length === 0) return ["delivery=none"];
+  if (deliveries.length === 1) {
+    const [delivery] = deliveries;
+    const parts = [`delivery=${delivery.status}`];
+    if (delivery.kindleEmail) parts.push(`kindle=${delivery.kindleEmail}`);
+    if (delivery.error) parts.push(`delivery-error=${delivery.error}`);
+    return parts;
+  }
+  const sent = deliveries.filter((delivery) => delivery.status === "sent").length;
+  const parts = [`delivery=${sent}/${deliveries.length} sent`];
+  for (const delivery of deliveries) {
+    const label = delivery.kindleEmail ?? delivery.id;
+    parts.push(`${label}=${delivery.status}${delivery.error ? ` (${delivery.error})` : ""}`);
+  }
+  return parts;
 }
 
 async function getClient(deps: CliDeps, flags: CommonFlags): Promise<KindleflowClient> {
@@ -85,18 +119,18 @@ function isError(value: unknown): value is { __error: number } {
 
 export async function runSend(
   deps: CliDeps,
-  flags: CommonFlags & { url: string; noSend?: boolean; title?: string; positional: string }
+  flags: CommonFlags & KindleFlags & { url: string; noSend?: boolean; title?: string; positional: string }
 ): Promise<void> {
   const client = await safeRun(deps.io, () => getClient(deps, flags));
   if (isError(client)) deps.io.exit(client.__error);
   const sendMode: SendMode = flags.noSend ? "none" : "auto";
   const result = await safeRun(deps.io, () =>
-    (client as KindleflowClient).sendArticle(flags.positional, { title: flags.title, sendMode })
+    (client as KindleflowClient).sendArticle(flags.positional, { title: flags.title, sendMode, ...kindleOption(flags) })
   );
   if (isError(result)) deps.io.exit(result.__error);
   const sendResult = result as SendArticleResult;
   deps.io.stdout.write(formatSendResult(sendResult) + "\n");
-  deps.io.exit(sendResult.delivery?.status === "failed" ? EXIT_CODES.DELIVERY : EXIT_CODES.SUCCESS);
+  deps.io.exit(anyDeliveryFailed(sendResult) ? EXIT_CODES.DELIVERY : EXIT_CODES.SUCCESS);
 }
 
 function formatSendResult(result: SendArticleResult): string {
@@ -109,18 +143,13 @@ function formatSendResult(result: SendArticleResult): string {
   parts.push(`kind=${result.kind}`);
   if (result.filename) parts.push(`file=${result.filename}`);
   if (result.pdfVerdict) parts.push(`pdf-verdict=${result.pdfVerdict}`);
-  if (result.delivery) {
-    parts.push(`delivery=${result.delivery.status}`);
-    if (result.delivery.error) parts.push(`delivery-error=${result.delivery.error}`);
-  } else {
-    parts.push("delivery=none");
-  }
+  parts.push(...formatDeliveries(result));
   return parts.join(" | ");
 }
 
 export async function runSendBatch(
   deps: CliDeps,
-  flags: CommonFlags & { urls: string[]; noSend?: boolean }
+  flags: CommonFlags & KindleFlags & { urls: string[]; noSend?: boolean }
 ): Promise<void> {
   const client = await safeRun(deps.io, () => getClient(deps, flags));
   if (isError(client)) deps.io.exit(client.__error);
@@ -129,7 +158,7 @@ export async function runSendBatch(
   const summary = { total: 0, sent: 0, deduped: 0, failed: 0 };
 
   const outcome = await safeRun(deps.io, async () => {
-    for await (const ev of (client as KindleflowClient).sendBatch(flags.urls, { sendMode })) {
+    for await (const ev of (client as KindleflowClient).sendBatch(flags.urls, { sendMode, ...kindleOption(flags) })) {
       if (ev.type === "start") {
         summary.total = ev.total;
         continue;
@@ -141,7 +170,13 @@ export async function runSendBatch(
         continue;
       }
       if (ev.ok) {
-        const label = ev.deduped ? "SKIP" : ev.result.delivery?.status === "sent" ? "SENT" : "OK";
+        const label = ev.deduped
+          ? "SKIP"
+          : isFullySent(ev.result)
+            ? "SENT"
+            : anyDeliveryFailed(ev.result)
+              ? "PARTIAL"
+              : "OK";
         deps.io.stdout.write(`${ev.url}\t${label}\t${ev.result.title}\n`);
       } else {
         worstExit = pickWorseExit(worstExit, EXIT_CODES[ev.error.code]);
@@ -233,6 +268,12 @@ export async function runStatus(deps: CliDeps, flags: CommonFlags): Promise<void
     `kindle-email: ${status.kindleEmail ?? "(not set)"}`,
     `user: ${status.user?.email ?? "(unknown)"}`
   ];
+  if (status.kindles && status.kindles.length > 0) {
+    lines.push("kindles:");
+    for (const kindle of status.kindles) {
+      lines.push(`  - ${kindle.name} <${kindle.email}>${kindle.sendByDefault ? " (default)" : ""}`);
+    }
+  }
   if (status.recent.length > 0) {
     lines.push("recent:");
     for (const item of status.recent.slice(0, 5)) {
@@ -282,7 +323,7 @@ export async function runLogin(
 
 export async function runSendFile(
   deps: CliDeps,
-  flags: CommonFlags & { positional: string; title?: string }
+  flags: CommonFlags & KindleFlags & { positional: string; title?: string }
 ): Promise<void> {
   const { stat } = await import("node:fs/promises");
   const { extname } = await import("node:path");
@@ -325,13 +366,13 @@ export async function runSendFile(
   if (isError(client)) deps.io.exit(client.__error);
 
   const result = await safeRun(deps.io, () =>
-    (client as KindleflowClient).sendFile(flags.positional, { title: flags.title })
+    (client as KindleflowClient).sendFile(flags.positional, { title: flags.title, ...kindleOption(flags) })
   );
   if (isError(result)) deps.io.exit(result.__error);
 
   const sendResult = result as SendArticleResult;
   deps.io.stdout.write(formatUploadResult(sendResult) + "\n");
-  deps.io.exit(sendResult.delivery?.status === "failed" ? EXIT_CODES.DELIVERY : EXIT_CODES.SUCCESS);
+  deps.io.exit(anyDeliveryFailed(sendResult) ? EXIT_CODES.DELIVERY : EXIT_CODES.SUCCESS);
 }
 
 function formatUploadResult(result: SendArticleResult): string {
@@ -339,12 +380,7 @@ function formatUploadResult(result: SendArticleResult): string {
   parts.push(`uploaded: ${result.title}`);
   parts.push(`kind=${result.kind}`);
   if (result.filename) parts.push(`file=${result.filename}`);
-  if (result.delivery) {
-    parts.push(`delivery=${result.delivery.status}`);
-    if (result.delivery.error) parts.push(`delivery-error=${result.delivery.error}`);
-  } else {
-    parts.push("delivery=none");
-  }
+  parts.push(...formatDeliveries(result));
   return parts.join(" | ");
 }
 

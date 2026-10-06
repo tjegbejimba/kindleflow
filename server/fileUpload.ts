@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthStore, KindleDelivery, LibraryItemMimeType } from "./authStore.js";
 import type { SmtpConfig } from "./config.js";
-import { sendFileToKindle } from "./mailer.js";
+import { deliverToKindles } from "./kindleDelivery.js";
 
 export interface SaveUploadedFileInput {
   userId: string;
@@ -28,6 +28,9 @@ export interface SendUploadedFileOptions {
   dataDir: string;
   store: AuthStore;
   smtp?: SmtpConfig;
+  /** Kindle emails to deliver to. Takes precedence over `kindleEmail`. */
+  kindleEmails?: string[];
+  /** @deprecated single-Kindle form; use `kindleEmails`. */
   kindleEmail?: string;
 }
 
@@ -36,7 +39,9 @@ export interface SendUploadedFileResult {
   storedFilename: string;
   title: string;
   mimeType: LibraryItemMimeType;
+  /** First delivery of the batch, kept for older clients. */
   delivery: KindleDelivery | null;
+  deliveries: KindleDelivery[];
 }
 
 export async function saveUploadedFile(
@@ -143,54 +148,25 @@ export async function sendUploadedFile(
   // First, save the file
   const saved = await saveUploadedFile(input, options);
 
-  // Decide whether to attempt delivery
-  const shouldDeliver = Boolean(options.smtp && options.kindleEmail);
-
-  if (!shouldDeliver) {
-    return {
-      ...saved,
-      delivery: null
-    };
+  const targets = options.kindleEmails ?? (options.kindleEmail ? [options.kindleEmail] : []);
+  if (!options.smtp || targets.length === 0) {
+    return { ...saved, delivery: null, deliveries: [] };
   }
 
-  // Create delivery record
-  const delivery = options.store.createKindleDelivery(input.userId, {
-    libraryItemId: saved.libraryItemId,
-    title: saved.title,
-    filename: saved.storedFilename,
-    kindleEmail: options.kindleEmail!,
+  const deliveries = await deliverToKindles({
+    store: options.store,
+    smtp: options.smtp,
+    dataDir: options.dataDir,
+    userId: input.userId,
+    targets,
+    file: {
+      libraryItemId: saved.libraryItemId,
+      title: saved.title,
+      filename: saved.storedFilename,
+      displayFilename: saved.title + path.extname(saved.storedFilename)
+    },
     trigger: "upload"
   });
 
-  // Attempt to send
-  try {
-    const result = await sendFileToKindle(
-      options.smtp!,
-      options.dataDir,
-      saved.storedFilename,
-      options.kindleEmail!,
-      saved.title + path.extname(saved.storedFilename)
-    );
-
-    const sentDelivery = options.store.recordKindleDeliveryResult(delivery.id, {
-      status: "sent",
-      messageId: result.messageId,
-      response: result.response
-    });
-
-    return {
-      ...saved,
-      delivery: sentDelivery
-    };
-  } catch (error) {
-    const failedDelivery = options.store.recordKindleDeliveryResult(delivery.id, {
-      status: "failed",
-      error: error instanceof Error ? error.message : "Upload delivery failed."
-    });
-
-    return {
-      ...saved,
-      delivery: failedDelivery
-    };
-  }
+  return { ...saved, delivery: deliveries[0] ?? null, deliveries };
 }

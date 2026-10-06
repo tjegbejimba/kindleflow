@@ -17,7 +17,7 @@ function makeClient(overrides: Partial<KindleflowClient> = {}): KindleflowClient
 }
 
 describe("MCP stdio smoke (in-memory transport)", () => {
-  it("lists the four tools and invokes list_recent end-to-end", async () => {
+  it("lists every tool and invokes list_recent end-to-end", async () => {
     const kfClient = makeClient({
       listRecent: vi.fn().mockResolvedValue([
         {
@@ -47,6 +47,7 @@ describe("MCP stdio smoke (in-memory transport)", () => {
 
     const tools = await mcpClient.listTools();
     expect(tools.tools.map((t) => t.name).sort()).toEqual([
+      "kindleflow.list_kindles",
       "kindleflow.list_recent",
       "kindleflow.retry_delivery",
       "kindleflow.send_article",

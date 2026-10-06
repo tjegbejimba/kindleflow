@@ -6,7 +6,7 @@ import type { AppConfig } from "./config.js";
 import { fetchAndExtractArticle } from "./articleFetcher.js";
 import { fetchFeed } from "./feed.js";
 import { generateKindleFile, saveKindlePdf } from "./kindleFile.js";
-import { sendFileToKindle } from "./mailer.js";
+import { deliverToKindles, summarizeDeliveries } from "./kindleDelivery.js";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -136,27 +136,20 @@ async function pollSubscription(
       filename: generated.filename,
       mimeType: generated.mimeType
     });
-    const delivery = store.createKindleDelivery(subscription.userId, {
-      libraryItemId: libraryItem.id,
-      title: libraryItem.title,
-      filename: libraryItem.filename,
-      kindleEmail: subscription.kindleEmail,
+    const targets = store.resolveKindleTargets(subscription.userId).map((device) => device.email);
+    const deliveries = await deliverToKindles({
+      store,
+      smtp: config.smtp,
+      dataDir: config.dataDir,
+      log: logger,
+      userId: subscription.userId,
+      targets: targets.length > 0 ? targets : [subscription.kindleEmail],
+      file: { libraryItemId: libraryItem.id, title: libraryItem.title, filename: libraryItem.filename },
       trigger: "subscription"
     });
-
-    try {
-      const result = await sendFileToKindle(config.smtp, config.dataDir, generated.filename, subscription.kindleEmail);
-      store.recordKindleDeliveryResult(delivery.id, {
-        status: "sent",
-        messageId: result.messageId,
-        response: result.response
-      });
-    } catch (error) {
-      store.recordKindleDeliveryResult(delivery.id, {
-        status: "failed",
-        error: error instanceof Error ? error.message : "Kindle delivery failed."
-      });
-      throw error;
+    // Partial failures still mark the post delivered; failed Kindles can be retried manually.
+    if (!summarizeDeliveries(deliveries).anySent) {
+      throw new Error(deliveries[0]?.error ?? "Kindle delivery failed.");
     }
     store.markPostDelivered(subscription.id, {
       url: post.url,

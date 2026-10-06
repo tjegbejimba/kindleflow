@@ -37,19 +37,32 @@ export interface ClientConfig {
 export interface SendArticleOptions {
   title?: string;
   sendMode?: SendMode;
+  /** Kindle names, emails, or ids. Non-empty forces a send to exactly these Kindles. */
+  kindles?: string[];
   signal?: AbortSignal;
 }
 
 export interface SendFileOptions {
   title?: string;
+  /** Kindle names, emails, or ids. Defaults to the account's send-by-default Kindles. */
+  kindles?: string[];
   signal?: AbortSignal;
 }
 
 export interface DeliverySummary {
   id: string;
   status: "pending" | "sent" | "failed";
+  kindleEmail?: string;
   error?: string;
   messageId?: string;
+}
+
+export interface KindleDeviceInfo {
+  id: string;
+  name: string;
+  email: string;
+  sendByDefault: boolean;
+  isPrimary: boolean;
 }
 
 export interface SendArticleResult {
@@ -60,8 +73,16 @@ export interface SendArticleResult {
   sourceUrl: string;
   title: string;
   deduped: boolean;
+  /** First delivery; see `deliveries` (and `deliveriesOf`) for every Kindle. */
   delivery: DeliverySummary | null;
+  deliveries?: DeliverySummary[];
   pdfVerdict?: string;
+}
+
+/** Every delivery for a send, tolerating older servers that only return `delivery`. */
+export function deliveriesOf(result: Pick<SendArticleResult, "delivery" | "deliveries">): DeliverySummary[] {
+  if (result.deliveries) return result.deliveries;
+  return result.delivery ? [result.delivery] : [];
 }
 
 export type BatchEvent =
@@ -72,6 +93,7 @@ export type BatchEvent =
 
 export interface SendBatchOptions {
   sendMode?: SendMode;
+  kindles?: string[];
   signal?: AbortSignal;
 }
 
@@ -82,7 +104,13 @@ export interface RecentItem {
   mimeType: string;
   sourceUrl?: string;
   createdAt: string;
-  latestDelivery: { id: string; status: "pending" | "sent" | "failed"; updatedAt: string } | null;
+  latestDelivery: {
+    id: string;
+    status: "pending" | "sent" | "failed";
+    updatedAt: string;
+    sentCount?: number;
+    totalCount?: number;
+  } | null;
 }
 
 export interface DeliveryRow {
@@ -100,6 +128,7 @@ export interface StatusResult {
   authOk: boolean;
   smtpConfigured: boolean;
   kindleEmail?: string;
+  kindles?: KindleDeviceInfo[];
   user?: { email: string };
   recent: RecentItem[];
 }
@@ -109,6 +138,7 @@ export interface KindleflowClient {
   sendFile(filePath: string, opts?: SendFileOptions): Promise<SendArticleResult>;
   sendBatch(urls: string[], opts?: SendBatchOptions): AsyncIterable<BatchEvent>;
   listRecent(limit?: number): Promise<RecentItem[]>;
+  listKindles(): Promise<KindleDeviceInfo[]>;
   retryDelivery(deliveryId: string): Promise<DeliveryRow>;
   status(): Promise<StatusResult>;
 }
@@ -161,7 +191,7 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
 
   async function sendArticle(url: string, opts: SendArticleOptions = {}): Promise<SendArticleResult> {
     const result = await request<SendArticleResult>("POST", "/api/articles/send-url", {
-      body: { url, title: opts.title, sendMode: opts.sendMode ?? "auto" },
+      body: { url, title: opts.title, sendMode: opts.sendMode ?? "auto", kindles: opts.kindles },
       signal: opts.signal
     });
     if (result.delivery?.status === "failed") {
@@ -177,6 +207,11 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
       `/api/library/recent?limit=${encodeURIComponent(String(limit))}`
     );
     return items;
+  }
+
+  async function listKindles(): Promise<KindleDeviceInfo[]> {
+    const { devices } = await request<{ devices: KindleDeviceInfo[] }>("GET", "/api/kindles");
+    return devices.map(({ id, name, email, sendByDefault, isPrimary }) => ({ id, name, email, sendByDefault, isPrimary }));
   }
 
   async function retryDelivery(deliveryId: string): Promise<DeliveryRow> {
@@ -196,12 +231,16 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
       if (!me.user) {
         throw new KindleflowError("AUTH", "Token is not associated with a user.");
       }
-      const recent = await listRecent(5).catch(() => [] as RecentItem[]);
+      const [recent, kindles] = await Promise.all([
+        listRecent(5).catch(() => [] as RecentItem[]),
+        listKindles().catch(() => undefined)
+      ]);
       return {
         reachable: true,
         authOk: true,
         smtpConfigured: Boolean(cfgResponse.emailDeliveryEnabled),
         kindleEmail: me.user.kindleEmail,
+        kindles,
         user: { email: me.user.email },
         recent
       };
@@ -272,11 +311,12 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
         // oxlint-disable-next-line react-doctor/async-await-in-loop
         const result = await sendArticle(item.url, {
           sendMode: opts.sendMode ?? "auto",
+          kindles: opts.kindles,
           signal: opts.signal
         });
         if (result.deduped) {
           deduped += 1;
-        } else if (result.delivery?.status === "sent") {
+        } else if (isFullySent(result)) {
           sent += 1;
         }
         yield {
@@ -341,11 +381,15 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
     // Create FormData
     const FormDataImpl = globalThis.FormData ?? (await import("undici")).FormData;
     const formData = new FormDataImpl();
-    const blob = new Blob([fileBuffer], { type: "application/octet-stream" });
-    formData.append("file", blob, filename);
+    // Text fields go before the file part so the server's multipart parser sees them.
     if (opts.title) {
       formData.append("title", opts.title);
     }
+    if (opts.kindles && opts.kindles.length > 0) {
+      formData.append("kindles", opts.kindles.join(","));
+    }
+    const blob = new Blob([fileBuffer], { type: "application/octet-stream" });
+    formData.append("file", blob, filename);
 
     // Upload
     const url = `${baseUrl}/api/files/upload`;
@@ -382,6 +426,7 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
       title: string;
       mimeType: string;
       delivery: DeliverySummary | null;
+      deliveries?: DeliverySummary[];
     };
 
     // Map server response to SendArticleResult
@@ -394,11 +439,17 @@ export function createClient(cfg: ClientConfig): KindleflowClient {
       sourceUrl: "",
       title: body.title,
       deduped: false,
-      delivery: body.delivery
+      delivery: body.delivery,
+      deliveries: body.deliveries
     };
   }
 
-  return { sendArticle, sendFile, sendBatch, listRecent, retryDelivery, status };
+  return { sendArticle, sendFile, sendBatch, listRecent, listKindles, retryDelivery, status };
+}
+
+export function isFullySent(result: Pick<SendArticleResult, "delivery" | "deliveries">): boolean {
+  const deliveries = deliveriesOf(result);
+  return deliveries.length > 0 && deliveries.every((delivery) => delivery.status === "sent");
 }
 
 function normaliseUrl(raw: string): string {
@@ -414,7 +465,7 @@ function normaliseUrl(raw: string): string {
 function mapStatusToCode(status: number, message: string): ErrorCode {
   if (status === 401 || status === 403) return "AUTH";
   if (status === 400 || status === 404 || status === 422) {
-    if (/SMTP|deliver|kindle email/i.test(message)) return "DELIVERY";
+    if (/SMTP|deliver|kindle email|unknown kindle|kindles must/i.test(message)) return "DELIVERY";
     return "IMPORT";
   }
   return "UNKNOWN";

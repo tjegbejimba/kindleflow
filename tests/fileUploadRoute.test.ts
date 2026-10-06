@@ -218,6 +218,49 @@ describe("POST /api/files/upload", () => {
     expect(body.delivery.trigger).toBe("upload");
   });
 
+  it("uploads to the selected Kindles and reports every delivery", async () => {
+    store.updateUserProfile(userId, { kindleEmail: "test@kindle.com" });
+    store.addKindleDevice(userId, { name: "Scribe", email: "scribe@kindle.com", sendByDefault: false });
+    store.addKindleDevice(userId, { name: "Oasis", email: "oasis@kindle.com", sendByDefault: false });
+
+    const form = new FormData();
+    form.append("kindles", "Scribe, oasis@kindle.com");
+    form.append("file", Buffer.from("%PDF-1.4\n%%EOF"), { filename: "document.pdf", contentType: "application/pdf" });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/files/upload",
+      headers: { authorization: "Bearer " + pat, ...form.getHeaders() },
+      payload: form
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.deliveries.map((d: { kindleEmail: string }) => d.kindleEmail)).toEqual([
+      "scribe@kindle.com",
+      "oasis@kindle.com"
+    ]);
+    expect(body.delivery.kindleEmail).toBe("scribe@kindle.com");
+  });
+
+  it("rejects unknown Kindle selections on upload", async () => {
+    store.updateUserProfile(userId, { kindleEmail: "test@kindle.com" });
+    const form = new FormData();
+    form.append("kindles", "Nope");
+    form.append("file", Buffer.from("%PDF-1.4\n%%EOF"), { filename: "document.pdf", contentType: "application/pdf" });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/files/upload",
+      headers: { authorization: "Bearer " + pat, ...form.getHeaders() },
+      payload: form
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/Unknown Kindle/);
+    expect(store.listRecentLibraryItems(userId)).toHaveLength(0);
+  });
+
   it("returns null delivery when SMTP is not configured", async () => {
     // Create app without SMTP
     await app.close();
