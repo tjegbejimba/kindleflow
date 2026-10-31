@@ -1,4 +1,3 @@
-import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -22,6 +21,7 @@ import { renderOpdsAcquisitionFeed, renderOpdsNavigationFeed } from "./opds.js";
 import { pollSubscriptions, startDailySubscriptionPoller } from "./subscriptionPoller.js";
 import { shouldAutoSendPdf } from "./pdfAnalyzer.js";
 import { registerFileUploadRoute } from "./fileUploadRoute.js";
+import { registerFileDownloadRoute } from "./fileDownloadRoute.js";
 
 const config = loadConfig();
 const app = Fastify({ logger: true });
@@ -51,12 +51,7 @@ if (devBypassActive) {
 
 await mkdir(config.dataDir, { recursive: true });
 
-await app.register(fastifyStatic, {
-  root: config.dataDir,
-  prefix: "/files/",
-  decorateReply: false,
-  index: false
-});
+await registerFileDownloadRoute(app, config.dataDir, store, auth);
 
 try {
   await registerClientStaticRoutes(app, clientDist);

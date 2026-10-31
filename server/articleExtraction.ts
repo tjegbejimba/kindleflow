@@ -22,7 +22,25 @@ export function extractArticleFromHtml(html: string, sourceUrl: string): Extract
   }
 
   const normalizedHtml = absolutizeLinks(parsed.content, sourceUrl);
-  const contentHtml = sanitizeHtml(normalizedHtml, {
+  const contentHtml = sanitizeArticleHtml(normalizedHtml);
+
+  const textContent = new JSDOM(contentHtml).window.document.body.textContent?.replace(/\s+/g, " ").trim() ?? "";
+  if (textContent.length < MINIMUM_TEXT_LENGTH) {
+    throw new Error("Could not find a readable article at this URL.");
+  }
+
+  return {
+    title: sanitizePlainText(parsed.title || dom.window.document.title || "Untitled article"),
+    contentHtml,
+    textContent,
+    byline: parsed.byline ? sanitizePlainText(parsed.byline) : undefined,
+    excerpt: parsed.excerpt ? sanitizePlainText(parsed.excerpt) : undefined,
+    siteName: parsed.siteName ? sanitizePlainText(parsed.siteName) : undefined
+  };
+}
+
+export function sanitizeArticleHtml(contentHtml: string): string {
+  return sanitizeHtml(contentHtml, {
     allowedTags: [
       "article",
       "section",
@@ -55,20 +73,6 @@ export function extractArticleFromHtml(html: string, sourceUrl: string): Extract
       a: sanitizeHtml.simpleTransform("a", { rel: "nofollow noopener noreferrer" }, true)
     }
   }).trim();
-
-  const textContent = new JSDOM(contentHtml).window.document.body.textContent?.replace(/\s+/g, " ").trim() ?? "";
-  if (textContent.length < MINIMUM_TEXT_LENGTH) {
-    throw new Error("Could not find a readable article at this URL.");
-  }
-
-  return {
-    title: sanitizePlainText(parsed.title || dom.window.document.title || "Untitled article"),
-    contentHtml,
-    textContent,
-    byline: parsed.byline ? sanitizePlainText(parsed.byline) : undefined,
-    excerpt: parsed.excerpt ? sanitizePlainText(parsed.excerpt) : undefined,
-    siteName: parsed.siteName ? sanitizePlainText(parsed.siteName) : undefined
-  };
 }
 
 function absolutizeLinks(contentHtml: string, sourceUrl: string): string {

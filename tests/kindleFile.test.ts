@@ -1,6 +1,8 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { inflateRawSync } from "node:zlib";
 import { PDFDocument } from "pdf-lib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { generateCoverPng } from "../server/coverImage.js";
@@ -46,7 +48,69 @@ describe("generateKindleFile", () => {
     expect(cover.includes(Buffer.from("IHDR"))).toBe(true);
     expect(cover.includes(Buffer.from("IDAT"))).toBe(true);
   });
+
+  it("does not embed local files referenced by submitted HTML", async () => {
+    const marker = "synthetic-private-file-for-security-regression";
+    const privateFile = path.join(tempDir, "private.txt");
+    await writeFile(privateFile, marker);
+
+    const file = await generateKindleFile(
+      {
+        title: "Safe article",
+        contentHtml: `<p>Keep this <strong>article</strong>.</p><img src="file://${privateFile}" />`,
+        textContent: "Keep this article."
+      },
+      { dataDir: tempDir }
+    );
+
+    const entries = unzipEntries(await readFile(file.absolutePath));
+    expect(entries.some((entry) => entry.includes(Buffer.from(marker)))).toBe(false);
+    expect(entries.some((entry) => entry.includes(Buffer.from("<strong>article</strong>")))).toBe(true);
+    expect(entries.some((entry) => entry.includes(Buffer.from("file://")))).toBe(false);
+  });
+
+  it("does not fetch HTTP resources referenced by submitted HTML", async () => {
+    let requests = 0;
+    const server = createServer((_request, response) => {
+      requests += 1;
+      response.writeHead(200, { "content-type": "image/png" });
+      response.end(generateCoverPng({ title: "Synthetic internal image" }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing test server address");
+
+    try {
+      await generateKindleFile(
+        {
+          title: "Safe article",
+          contentHtml: `<p>Keep this article.</p><img src="http://127.0.0.1:${address.port}/private.png" />`,
+          textContent: "Keep this article."
+        },
+        { dataDir: tempDir }
+      );
+      expect(requests).toBe(0);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
 });
+
+function unzipEntries(zip: Buffer): Buffer[] {
+  const entries: Buffer[] = [];
+  let offset = 0;
+  while (zip.readUInt32LE(offset) === 0x04034b50) {
+    const compression = zip.readUInt16LE(offset + 8);
+    const size = zip.readUInt32LE(offset + 18);
+    const nameLength = zip.readUInt16LE(offset + 26);
+    const extraLength = zip.readUInt16LE(offset + 28);
+    const start = offset + 30 + nameLength + extraLength;
+    const bytes = zip.subarray(start, start + size);
+    entries.push(compression === 8 ? inflateRawSync(bytes) : bytes);
+    offset = start + size;
+  }
+  return entries;
+}
 
 describe("saveKindlePdf", () => {
   it("writes a PDF with a KindleFlow cover page before the original document", async () => {

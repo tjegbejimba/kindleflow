@@ -30,26 +30,42 @@ export function normalizeFeedUrl(rawUrl: string): string {
 }
 
 export async function fetchFeed(rawUrl: string, options: FetchFeedOptions = {}): Promise<ParsedFeed & { feedUrl: string }> {
-  const feedUrl = normalizeFeedUrl(rawUrl);
-  const validatedUrl = await validateFetchUrl(feedUrl);
-  const cookie = cookieHeaderForUrl(validatedUrl, options.substackAuth);
-  const response = await fetch(validatedUrl, {
-    headers: {
-      "user-agent": "KindleFlow/1.0 (+self-hosted newsletter reader)",
-      accept: "application/rss+xml, application/atom+xml, application/xml, text/xml",
-      ...(cookie ? { cookie } : {})
-    },
-    signal: AbortSignal.timeout(15_000)
-  });
+  let currentUrl = await validateFetchUrl(normalizeFeedUrl(rawUrl));
+  const signal = AbortSignal.timeout(15_000);
 
-  if (!response.ok) {
-    throw new Error(`Feed fetch failed with HTTP ${response.status}.`);
+  for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
+    const cookie = cookieHeaderForUrl(currentUrl, options.substackAuth);
+    const response = await fetch(currentUrl, {
+      redirect: "manual",
+      headers: {
+        "user-agent": "KindleFlow/1.0 (+self-hosted newsletter reader)",
+        accept: "application/rss+xml, application/atom+xml, application/xml, text/xml",
+        ...(cookie ? { cookie } : {})
+      },
+      signal
+    });
+
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get("location");
+      await response.body?.cancel();
+      if (!location) {
+        throw new Error("The feed URL redirected without a Location header.");
+      }
+      currentUrl = await validateFetchUrl(new URL(location, currentUrl).toString());
+      continue;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Feed fetch failed with HTTP ${response.status}.`);
+    }
+
+    return {
+      feedUrl: currentUrl.toString(),
+      ...parseFeedXml(await response.text())
+    };
   }
 
-  return {
-    feedUrl: validatedUrl.toString(),
-    ...parseFeedXml(await response.text())
-  };
+  throw new Error("The feed URL redirected too many times.");
 }
 
 export function parseFeedXml(xml: string): ParsedFeed {

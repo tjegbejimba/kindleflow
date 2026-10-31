@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import type { Content, Options } from "epub-gen-memory";
 import { PDFDocument } from "pdf-lib";
-import type { ExtractedArticle } from "./articleExtraction.js";
+import { sanitizeArticleHtml, type ExtractedArticle } from "./articleExtraction.js";
 import { generateCoverPng } from "./coverImage.js";
 
 type EpubGenerator = (optionsOrTitle: Options | string, content: Content, ...args: (boolean | number)[]) => Promise<Buffer>;
@@ -69,7 +69,7 @@ export async function generateKindleFile(
     [
       {
         title: article.title,
-        content: `${article.contentHtml}${sourceLink}`,
+        content: `${sanitizeArticleHtml(article.contentHtml)}${sourceLink}`,
         url: options.sourceUrl
       }
     ]
