@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { PDFDocument } from "pdf-lib";
+import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { generateCoverPng } from "../server/coverImage.js";
 import { generateKindleFile, saveKindlePdf } from "../server/kindleFile.js";
@@ -19,6 +20,23 @@ afterEach(async () => {
 });
 
 describe("generateKindleFile", () => {
+  it("does not reintroduce raw-text markup into generated EPUB chapters", async () => {
+    const file = await generateKindleFile({
+      title: "Inert raw-text regression",
+      contentHtml: '<p>Keep <strong>formatting</strong> and <a href="https://example.com/post">links</a>.</p><xmp><span data-marker="raw">Inert marker</span></xmp><svg><textarea><span data-marker="foreign">Foreign marker</span></textarea></svg><iframe><iframe>Fallback</iframe></iframe>',
+      textContent: "Keep formatting and links."
+    }, { dataDir: tempDir });
+    const chapters = unzipEntries(await readFile(file.absolutePath))
+      .map((entry) => entry.toString("utf8"))
+      .filter((entry) => entry.includes("<strong>formatting</strong>"));
+
+    expect(chapters).toHaveLength(1);
+    const chapter = new JSDOM(chapters[0]).window.document;
+    expect(chapter.querySelector("strong")?.textContent).toBe("formatting");
+    expect(chapter.querySelector('a[href="https://example.com/post"]')).not.toBeNull();
+    expect(chapter.querySelector("xmp, svg, textarea, iframe, [data-marker]")).toBeNull();
+  });
+
   it("writes an EPUB for an extracted article into the data directory", async () => {
     const file = await generateKindleFile(
       {

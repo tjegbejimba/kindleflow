@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchAndExtractArticle } from "../server/articleFetcher.js";
 
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }])
+}));
+
 const readableArticleHtml = `
   <!doctype html>
   <html>
@@ -18,6 +22,50 @@ const readableArticleHtml = `
 describe("fetchAndExtractArticle", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("fetches initial HTTP article URLs without credentials", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).has("cookie")).toBe(false);
+      return new Response(readableArticleHtml, { headers: { "content-type": "text/html" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect((await fetchAndExtractArticle("http://newsletter.substack.com/p/post", {
+      substackAuth: { cookie: "substack.sid=synthetic-reader", additionalCookieHosts: [] }
+    })).kind).toBe("article");
+  });
+
+  it("rejects a credential-bearing downgrade before fetching its destination", async () => {
+    const redirect = new Response("Redirect body", {
+      status: 302, headers: { location: "http://newsletter.substack.com/p/next" }
+    });
+    const cancel = vi.spyOn(redirect.body!, "cancel");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(redirect)
+      .mockResolvedValueOnce(new Response(readableArticleHtml, { headers: { "content-type": "text/html" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchAndExtractArticle("https://newsletter.substack.com/p/post", {
+      substackAuth: { cookie: "substack.sid=synthetic-reader", additionalCookieHosts: [] }
+    })).rejects.toThrow(/HTTPS to HTTP/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("preserves HTTPS redirects while recomputing cookie host restrictions", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "/next" } }))
+      .mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: "https://example.com/post" } }))
+      .mockResolvedValueOnce(new Response(readableArticleHtml, { headers: { "content-type": "text/html" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchAndExtractArticle("https://newsletter.substack.com/p/post", {
+      substackAuth: { cookie: "substack.sid=synthetic-reader", additionalCookieHosts: [] }
+    });
+
+    expect(fetchMock.mock.calls.map(([, init]) => new Headers(init.headers).get("cookie")))
+      .toEqual(["substack.sid=synthetic-reader", "substack.sid=synthetic-reader", null]);
   });
 
   it("sends the configured Substack cookie when fetching Substack article pages", async () => {

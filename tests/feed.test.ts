@@ -45,6 +45,101 @@ describe("feed helpers", () => {
 });
 
 describe("fetchFeed", () => {
+  it.each([undefined, "1"])("cancels oversized streams before parsing, with Content-Length %s", async (length) => {
+    let reads = 0;
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream({
+      pull(controller) {
+        reads += 1;
+        controller.enqueue(new TextEncoder().encode("not XML!"));
+        if (reads === 3) controller.close();
+      },
+      cancel
+    }, { highWaterMark: 0 }), { headers: length ? { "content-length": length } : {} });
+    const text = vi.spyOn(response, "text");
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+
+    await expect(fetchFeed("https://feed.example/rss", { maxBytes: 12 })).rejects.toThrow(/feed payload is too large/i);
+    expect(reads).toBe(2);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(response.body?.locked).toBe(false);
+    expect(text).not.toHaveBeenCalled();
+  });
+
+  it("counts UTF-8 bytes rather than characters", async () => {
+    const cancel = vi.fn();
+    let sent = false;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+      pull(controller) {
+        if (sent) controller.close();
+        else controller.enqueue(new TextEncoder().encode("ééé"));
+        sent = true;
+      },
+      cancel
+    }, { highWaterMark: 0 }))));
+
+    await expect(fetchFeed("https://feed.example/rss", { maxBytes: 5 })).rejects.toThrow(/too large/);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    rss,
+    '<feed xmlns="http://www.w3.org/2005/Atom"><title>Example feed</title><entry><title>Post</title><link href="https://feed.example/post"/></entry></feed>'
+  ])("accepts valid feeds exactly at the byte limit across split UTF-8 chunks", async (xml) => {
+    const bytes = new TextEncoder().encode(xml.replace("Post", "Café"));
+    const split = bytes.indexOf(0xc3) + 1;
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes.subarray(0, split));
+        controller.enqueue(bytes.subarray(split));
+        controller.close();
+      }
+    }));
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+
+    const result = await fetchFeed("https://feed.example/rss", { maxBytes: bytes.byteLength });
+    expect(result.feedTitle).toBe("Example feed");
+    expect(result.items[0]).toMatchObject({ title: "Café", url: "https://feed.example/post" });
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it("fetches initial HTTP feeds without credentials", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).has("cookie")).toBe(false);
+      return new Response(rss);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect((await fetchFeed("http://newsletter.substack.com/", {
+      substackAuth: { cookie: "substack.sid=synthetic-reader", additionalCookieHosts: [] }
+    })).feedTitle).toBe("Example feed");
+  });
+
+  it("rejects a credential-bearing downgrade before fetching its destination", async () => {
+    const redirect = new Response("Redirect body", {
+      status: 307, headers: { location: "http://newsletter.substack.com/feed" }
+    });
+    const cancel = vi.spyOn(redirect.body!, "cancel");
+    const fetchMock = vi.fn().mockResolvedValueOnce(redirect).mockResolvedValueOnce(new Response(rss));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchFeed("https://newsletter.substack.com/", {
+      substackAuth: { cookie: "substack.sid=synthetic-reader", additionalCookieHosts: [] }
+    })).rejects.toThrow(/HTTPS to HTTP/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("continues uncredentialed HTTP redirects without attaching cookies", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "http://feed.example/rss" } }))
+      .mockResolvedValueOnce(new Response(rss));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect((await fetchFeed("https://feed.example/rss")).feedTitle).toBe("Example feed");
+    expect(new Headers(fetchMock.mock.calls[1][1].headers).has("cookie")).toBe(false);
+  });
+
   it.each(["http://127.0.0.1/private", "http://100.104.13.117:5000/", "file:///private"])(
     "blocks a redirect to %s before requesting it",
     async (location) => {

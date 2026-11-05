@@ -16,7 +16,10 @@ export interface ParsedFeed {
 
 export interface FetchFeedOptions {
   substackAuth?: SubstackAuthConfig;
+  maxBytes?: number;
 }
+
+const MAX_FEED_BYTES = 5 * 1024 * 1024;
 
 export function normalizeFeedUrl(rawUrl: string): string {
   const url = new URL(rawUrl);
@@ -30,6 +33,10 @@ export function normalizeFeedUrl(rawUrl: string): string {
 }
 
 export async function fetchFeed(rawUrl: string, options: FetchFeedOptions = {}): Promise<ParsedFeed & { feedUrl: string }> {
+  const maxBytes = Math.min(options.maxBytes ?? MAX_FEED_BYTES, MAX_FEED_BYTES);
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+    throw new Error("The feed byte limit must be a positive integer.");
+  }
   let currentUrl = await validateFetchUrl(normalizeFeedUrl(rawUrl));
   const signal = AbortSignal.timeout(15_000);
 
@@ -51,7 +58,11 @@ export async function fetchFeed(rawUrl: string, options: FetchFeedOptions = {}):
       if (!location) {
         throw new Error("The feed URL redirected without a Location header.");
       }
-      currentUrl = await validateFetchUrl(new URL(location, currentUrl).toString());
+      const nextUrl = new URL(location, currentUrl);
+      if (cookie && nextUrl.protocol === "http:") {
+        throw new Error("Refusing to redirect an authenticated feed request from HTTPS to HTTP.");
+      }
+      currentUrl = await validateFetchUrl(nextUrl.toString());
       continue;
     }
 
@@ -61,11 +72,33 @@ export async function fetchFeed(rawUrl: string, options: FetchFeedOptions = {}):
 
     return {
       feedUrl: currentUrl.toString(),
-      ...parseFeedXml(await response.text())
+      ...parseFeedXml(await readFeedXml(response, maxBytes))
     };
   }
 
   throw new Error("The feed URL redirected too many times.");
+}
+
+async function readFeedXml(response: Response, maxBytes: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    for (let result = await reader.read(); !result.done; result = await reader.read()) {
+      totalBytes += result.value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("The feed payload is too large.");
+      }
+      chunks.push(result.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return new TextDecoder().decode(Buffer.concat(chunks, totalBytes));
 }
 
 export function parseFeedXml(xml: string): ParsedFeed {

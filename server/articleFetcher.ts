@@ -46,10 +46,15 @@ export async function fetchAndExtractArticle(rawUrl: string, options: FetchArtic
 
     if (isRedirect(response.status)) {
       const location = response.headers.get("location");
+      await response.body?.cancel();
       if (!location) {
         throw new Error("The article URL redirected without a Location header.");
       }
-      currentUrl = await validateFetchUrl(new URL(location, currentUrl).toString());
+      const nextUrl = new URL(location, currentUrl);
+      if (cookie && nextUrl.protocol === "http:") {
+        throw new Error("Refusing to redirect an authenticated article request from HTTPS to HTTP.");
+      }
+      currentUrl = await validateFetchUrl(nextUrl.toString());
       continue;
     }
 
