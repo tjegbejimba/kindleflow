@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { cookieHeaderForUrl, parseAdditionalCookieHosts } from "../server/substackAuth.js";
 
 describe("Substack auth helpers", () => {
+  it.each(["substack.com", "newsletter.substack.com", "custom-newsletter.example"])(
+    "never attaches a cookie over plaintext HTTP to %s",
+    (host) => {
+      expect(cookieHeaderForUrl(new URL(`http://${host}/feed`), {
+        cookie: "substack.sid=synthetic-reader",
+        additionalCookieHosts: ["custom-newsletter.example"]
+      })).toBeUndefined();
+    }
+  );
+
   it("uses the cookie for Substack hosts by default", () => {
     expect(
       cookieHeaderForUrl(new URL("https://newsletter.substack.com/p/post"), {

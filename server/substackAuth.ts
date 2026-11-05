@@ -5,7 +5,7 @@ export interface SubstackAuthConfig {
 
 export function cookieHeaderForUrl(url: URL, auth: SubstackAuthConfig | undefined): string | undefined {
   const cookie = auth?.cookie?.trim();
-  if (!cookie || !auth) {
+  if (!cookie || !auth || url.protocol !== "https:") {
     return undefined;
   }
 
